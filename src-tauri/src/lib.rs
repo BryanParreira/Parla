@@ -384,6 +384,20 @@ fn place_overlay(app: &AppHandle) {
     let x = area.position.x + (area.size.width as i32 - size.width as i32) / 2;
     let y = area.position.y + area.size.height as i32 - size.height as i32 - margin;
     let _ = overlay.set_position(PhysicalPosition::new(x, y));
+    float_overlay(app);
+}
+
+// Raised again on every recording, since switching Spaces or entering full screen can
+// leave the pill ordered behind the app in front.
+fn float_overlay(app: &AppHandle) {
+    let Some(overlay) = app.get_webview_window("overlay") else {
+        return;
+    };
+    let _ = app.run_on_main_thread(move || {
+        if let Ok(window) = overlay.ns_window() {
+            engine::float_overlay(window);
+        }
+    });
 }
 
 fn show_main(app: &AppHandle) {
@@ -454,6 +468,7 @@ pub fn run() {
             if let Some(overlay) = app.get_webview_window("overlay") {
                 let _ = overlay.set_ignore_cursor_events(true);
             }
+            float_overlay(app.handle());
             build_tray(app)?;
             // Asking at launch is what registers Parla in System Settings' Accessibility
             // list; macOS only shows its own prompt the first time.

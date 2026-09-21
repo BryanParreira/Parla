@@ -1326,3 +1326,25 @@ public func parlaRequestAccessibility() -> Bool {
   let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
   return AXIsProcessTrustedWithOptions(options)
 }
+
+// A plain window never appears over another app's full-screen space; a non-activating
+// panel does, and it can't take focus from the app being dictated into.
+private final class OverlayPanel: NSPanel {
+  override var canBecomeKey: Bool { false }
+  override var canBecomeMain: Bool { false }
+}
+
+@_cdecl("parla_float_overlay")
+public func parlaFloatOverlay(window: Int) -> Bool {
+  guard let pointer = UnsafeRawPointer(bitPattern: window) else { return false }
+  let window = Unmanaged<NSWindow>.fromOpaque(pointer).takeUnretainedValue()
+  if !(window is OverlayPanel) {
+    object_setClass(window, OverlayPanel.self)
+    window.styleMask.insert(.nonactivatingPanel)
+  }
+  window.level = .statusBar
+  window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+  window.hidesOnDeactivate = false
+  window.orderFrontRegardless()
+  return true
+}

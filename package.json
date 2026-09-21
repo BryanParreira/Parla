@@ -2,7 +2,7 @@
   "name": "parla",
   "private": true,
   "license": "SEE LICENSE IN LICENSE.md",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",

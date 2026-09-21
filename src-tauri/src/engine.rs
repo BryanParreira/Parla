@@ -16,6 +16,7 @@ swift!(fn parla_request_mic() -> Bool);
 swift!(fn parla_request_accessibility() -> Bool);
 swift!(fn parla_play_cue(start: Bool) -> Bool);
 swift!(fn parla_duck_audio(enable: Bool) -> Bool);
+swift!(fn parla_float_overlay(window: Int) -> Bool);
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -169,6 +170,12 @@ pub fn play_cue(start: bool) {
 // talks over the user. Turning it off restores the exact level it replaced.
 pub fn duck_audio(enable: bool) {
     let _ = unsafe { parla_duck_audio(enable) };
+}
+
+// Keeps the overlay above every app, full-screen ones included. Must run on the main
+// thread.
+pub fn float_overlay(window: *mut std::ffi::c_void) {
+    let _ = unsafe { parla_float_overlay(window as Int) };
 }
 
 #[cfg(test)]
