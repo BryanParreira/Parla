@@ -139,34 +139,135 @@ export type DictationEvent =
   | { phase: "blocked"; reason: string }
   | { phase: "error"; message: string };
 
-/** macOS virtual keycodes, which is what the key watcher polls. */
-export const KEY_LABELS: Record<number, string> = {
-  0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X", 8: "C", 9: "V", 11: "B",
-  12: "Q", 13: "W", 14: "E", 15: "R", 16: "Y", 17: "T", 18: "1", 19: "2", 20: "3", 21: "4",
-  22: "6", 23: "5", 24: "=", 25: "9", 26: "7", 27: "-", 28: "8", 29: "0", 30: "]", 31: "O",
-  32: "U", 33: "[", 34: "I", 35: "P", 36: "return", 37: "L", 38: "J", 39: "'", 40: "K",
-  41: ";", 42: "\\", 43: ",", 44: "/", 45: "N", 46: "M", 47: ".", 48: "tab", 49: "space",
-  50: "`", 51: "delete", 53: "esc", 54: "right ⌘", 55: "⌘", 56: "⇧", 57: "caps lock",
-  58: "⌥", 59: "⌃", 60: "right ⇧", 61: "right ⌥", 62: "right ⌃", 63: "fn",
-  65: "num .", 67: "num *", 69: "num +", 71: "clear", 75: "num /", 76: "num enter",
-  78: "num -", 81: "num =", 82: "num 0", 83: "num 1", 84: "num 2", 85: "num 3", 86: "num 4",
-  87: "num 5", 88: "num 6", 89: "num 7", 91: "num 8", 92: "num 9",
-  96: "F5", 97: "F6", 98: "F7", 99: "F3", 100: "F8", 101: "F9", 103: "F11", 105: "F13",
-  107: "F14", 109: "F10", 111: "F12", 113: "F15", 114: "help", 115: "home", 116: "page up",
-  117: "fwd delete", 118: "F4", 119: "end", 120: "F2", 121: "page down", 122: "F1",
-  123: "←", 124: "→", 125: "↓", 126: "↑",
+/** Which keyboard the app is running on. Keycodes are the platform's own. */
+export const PLATFORM: "mac" | "windows" | "linux" = (() => {
+  const agent = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  if (/Windows/i.test(agent)) return "windows";
+  if (/Mac/i.test(agent)) return "mac";
+  return "linux";
+})();
+
+type KeyTable = {
+  labels: Record<number, string>;
+  pairs: { codes: [number, number]; label: string }[];
+  capsLock: number;
+  modifiers: number[];
+  presets: { hotkey: Hotkey; label: string; hint: string }[];
+  modifierHint: string;
 };
 
-/** Left and right halves of the same modifier, and the label for either of them. */
-export const MODIFIER_PAIRS: { codes: [number, number]; label: string }[] = [
-  { codes: [55, 54], label: "⌘ command" },
-  { codes: [56, 60], label: "⇧ shift" },
-  { codes: [58, 61], label: "⌥ option" },
-  { codes: [59, 62], label: "⌃ control" },
-];
+const range = (from: number, labels: string[]) =>
+  Object.fromEntries(labels.map((label, i) => [from + i, label]));
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
-export const CAPS_LOCK = 57;
-export const MODIFIER_CODES = [54, 55, 56, 58, 59, 60, 61, 62, 63];
+/** macOS virtual keycodes, which is what the key watcher polls on a Mac. */
+const MAC_KEYS: KeyTable = {
+  labels: {
+    0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X", 8: "C", 9: "V", 11: "B",
+    12: "Q", 13: "W", 14: "E", 15: "R", 16: "Y", 17: "T", 18: "1", 19: "2", 20: "3", 21: "4",
+    22: "6", 23: "5", 24: "=", 25: "9", 26: "7", 27: "-", 28: "8", 29: "0", 30: "]", 31: "O",
+    32: "U", 33: "[", 34: "I", 35: "P", 36: "return", 37: "L", 38: "J", 39: "'", 40: "K",
+    41: ";", 42: "\\", 43: ",", 44: "/", 45: "N", 46: "M", 47: ".", 48: "tab", 49: "space",
+    50: "`", 51: "delete", 53: "esc", 54: "right ⌘", 55: "⌘", 56: "⇧", 57: "caps lock",
+    58: "⌥", 59: "⌃", 60: "right ⇧", 61: "right ⌥", 62: "right ⌃", 63: "fn",
+    65: "num .", 67: "num *", 69: "num +", 71: "clear", 75: "num /", 76: "num enter",
+    78: "num -", 81: "num =", 82: "num 0", 83: "num 1", 84: "num 2", 85: "num 3", 86: "num 4",
+    87: "num 5", 88: "num 6", 89: "num 7", 91: "num 8", 92: "num 9",
+    96: "F5", 97: "F6", 98: "F7", 99: "F3", 100: "F8", 101: "F9", 103: "F11", 105: "F13",
+    107: "F14", 109: "F10", 111: "F12", 113: "F15", 114: "help", 115: "home", 116: "page up",
+    117: "fwd delete", 118: "F4", 119: "end", 120: "F2", 121: "page down", 122: "F1",
+    123: "←", 124: "→", 125: "↓", 126: "↑",
+  },
+  pairs: [
+    { codes: [55, 54], label: "⌘ command" },
+    { codes: [56, 60], label: "⇧ shift" },
+    { codes: [58, 61], label: "⌥ option" },
+    { codes: [59, 62], label: "⌃ control" },
+  ],
+  capsLock: 57,
+  modifiers: [54, 55, 56, 58, 59, 60, 61, 62, 63],
+  presets: [
+    { hotkey: { groups: [[58, 61]] }, label: "Option", hint: "Either Option key" },
+    { hotkey: { groups: [[61]] }, label: "Right Option", hint: "Keeps left Option free" },
+    { hotkey: { groups: [[54]] }, label: "Right Command", hint: "Rarely used on its own" },
+    { hotkey: { groups: [[59, 62]] }, label: "Control", hint: "Either Control key" },
+    { hotkey: { groups: [[63]] }, label: "Globe / Fn", hint: "Set Globe to “Do Nothing” first" },
+    { hotkey: { groups: [[59, 62], [58, 61]] }, label: "Control + Option", hint: "Free on most Macs" },
+  ],
+  modifierHint: "Include a modifier like ⌘, ⌥, ⌃, ⇧ or fn.",
+};
+
+/** Windows virtual-key codes. */
+const WINDOWS_KEYS: KeyTable = {
+  labels: {
+    ...range(0x41, LETTERS),
+    ...range(0x30, "0123456789".split("")),
+    ...range(0x70, Array.from({ length: 24 }, (_, i) => `F${i + 1}`)),
+    ...range(0x60, Array.from({ length: 10 }, (_, i) => `num ${i}`)),
+    0x08: "backspace", 0x09: "tab", 0x0d: "enter", 0x13: "pause", 0x14: "caps lock",
+    0x1b: "esc", 0x20: "space", 0x21: "page up", 0x22: "page down", 0x23: "end", 0x24: "home",
+    0x25: "←", 0x26: "↑", 0x27: "→", 0x28: "↓", 0x2c: "print screen", 0x2d: "insert",
+    0x2e: "delete", 0x5b: "Win", 0x5c: "right Win", 0x5d: "menu",
+    0xa0: "Shift", 0xa1: "right Shift", 0xa2: "Ctrl", 0xa3: "right Ctrl", 0xa4: "Alt",
+    0xa5: "right Alt", 0xba: ";", 0xbb: "=", 0xbc: ",", 0xbd: "-", 0xbe: ".", 0xbf: "/",
+    0xc0: "`", 0xdb: "[", 0xdc: "\\", 0xdd: "]", 0xde: "'",
+  },
+  pairs: [
+    { codes: [0xa2, 0xa3], label: "Ctrl" },
+    { codes: [0x5b, 0x5c], label: "Win" },
+    { codes: [0xa0, 0xa1], label: "Shift" },
+    { codes: [0xa4, 0xa5], label: "Alt" },
+  ],
+  capsLock: 0x14,
+  modifiers: [0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0x5b, 0x5c],
+  presets: [
+    { hotkey: { groups: [[0xa2, 0xa3], [0x5b, 0x5c]] }, label: "Ctrl + Win", hint: "Free in almost every app" },
+    { hotkey: { groups: [[0xa3]] }, label: "Right Ctrl", hint: "Keeps left Ctrl free" },
+    { hotkey: { groups: [[0xa2, 0xa3], [0xa0, 0xa1]] }, label: "Ctrl + Shift", hint: "Either side" },
+    { hotkey: { groups: [[0xa2, 0xa3], [0xa4, 0xa5]] }, label: "Ctrl + Alt", hint: "Either side" },
+  ],
+  modifierHint: "Include a modifier like Ctrl, Alt, Shift or Win.",
+};
+
+/** X11 keycodes on a standard layout. */
+const LINUX_KEYS: KeyTable = {
+  labels: {
+    ...range(10, "1234567890".split("")),
+    ...range(24, "QWERTYUIOP".split("")),
+    ...range(38, "ASDFGHJKL".split("")),
+    ...range(52, "ZXCVBNM".split("")),
+    ...range(67, Array.from({ length: 10 }, (_, i) => `F${i + 1}`)),
+    9: "esc", 20: "-", 21: "=", 22: "backspace", 23: "tab", 34: "[", 35: "]", 36: "enter",
+    37: "Ctrl", 47: ";", 48: "'", 49: "`", 50: "Shift", 51: "\\", 59: ",", 60: ".", 61: "/",
+    62: "right Shift", 64: "Alt", 65: "space", 66: "caps lock", 92: "AltGr", 95: "F11",
+    96: "F12", 105: "right Ctrl", 108: "right Alt", 110: "home", 111: "↑", 112: "page up",
+    113: "←", 114: "→", 115: "end", 116: "↓", 117: "page down", 118: "insert", 119: "delete",
+    133: "Super", 134: "right Super", 135: "menu",
+  },
+  pairs: [
+    { codes: [37, 105], label: "Ctrl" },
+    { codes: [133, 134], label: "Super" },
+    { codes: [50, 62], label: "Shift" },
+    { codes: [64, 108], label: "Alt" },
+  ],
+  capsLock: 66,
+  modifiers: [50, 62, 37, 105, 64, 108, 92, 133, 134],
+  presets: [
+    { hotkey: { groups: [[37, 105], [133, 134]] }, label: "Ctrl + Super", hint: "Free in most apps" },
+    { hotkey: { groups: [[105]] }, label: "Right Ctrl", hint: "Keeps left Ctrl free" },
+    { hotkey: { groups: [[108]] }, label: "Right Alt", hint: "Unless your layout uses AltGr" },
+    { hotkey: { groups: [[37, 105], [50, 62]] }, label: "Ctrl + Shift", hint: "Either side" },
+  ],
+  modifierHint: "Include a modifier like Ctrl, Alt, Shift or Super.",
+};
+
+const KEYS = PLATFORM === "windows" ? WINDOWS_KEYS : PLATFORM === "linux" ? LINUX_KEYS : MAC_KEYS;
+
+export const KEY_LABELS = KEYS.labels;
+/** Left and right halves of the same modifier, and the label for either of them. */
+export const MODIFIER_PAIRS = KEYS.pairs;
+export const CAPS_LOCK = KEYS.capsLock;
+export const MODIFIER_CODES = KEYS.modifiers;
 export const MAX_HOTKEY_KEYS = 3;
 
 const sorted = (codes: number[]) => [...codes].sort((a, b) => a - b);
@@ -212,18 +313,11 @@ export function hotkeyProblem(hotkey: Hotkey): string | null {
   if (hotkey.groups.length > MAX_HOTKEY_KEYS) return `Use at most ${MAX_HOTKEY_KEYS} keys.`;
   if (codes.includes(CAPS_LOCK)) return "Caps Lock stays on when pressed, so it can't be held to talk.";
   if (!hotkey.groups.some((group) => group.every((code) => MODIFIER_CODES.includes(code))))
-    return "Include a modifier like ⌘, ⌥, ⌃, ⇧ or fn.";
+    return KEYS.modifierHint;
   return null;
 }
 
-export const HOTKEY_PRESETS: { hotkey: Hotkey; label: string; hint: string }[] = [
-  { hotkey: { groups: [[58, 61]] }, label: "Option", hint: "Either Option key" },
-  { hotkey: { groups: [[61]] }, label: "Right Option", hint: "Keeps left Option free" },
-  { hotkey: { groups: [[54]] }, label: "Right Command", hint: "Rarely used on its own" },
-  { hotkey: { groups: [[59, 62]] }, label: "Control", hint: "Either Control key" },
-  { hotkey: { groups: [[63]] }, label: "Globe / Fn", hint: "Set Globe to “Do Nothing” first" },
-  { hotkey: { groups: [[59, 62], [58, 61]] }, label: "Control + Option", hint: "Free on most Macs" },
-];
+export const HOTKEY_PRESETS = KEYS.presets;
 
 /** BCP-47 codes Parakeet TDT v3 recognises without being told which one is spoken. */
 export const LANGUAGE_NAMES: Record<string, string> = {

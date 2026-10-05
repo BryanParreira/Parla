@@ -1,4 +1,4 @@
-use std::{ffi::c_void, thread, time::Duration};
+use std::{thread, time::Duration};
 
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -26,7 +26,7 @@ pub fn insert(app: &AppHandle, text: &str) -> Result<Delivery, String> {
     clipboard
         .write_text(text.to_string())
         .map_err(|e| e.to_string())?;
-    press_cmd(KEYCODE_V)?;
+    native::paste()?;
 
     // The target app reads the pasteboard asynchronously; restoring too early
     // would paste the old contents instead.
@@ -50,7 +50,7 @@ pub fn selection(app: &AppHandle) -> String {
     let previous = clipboard.read_text().ok();
     // Clearing first means an app that ignores the copy can't hand back stale contents.
     let _ = clipboard.write_text(String::new());
-    let copied = match press_cmd(KEYCODE_C) {
+    let copied = match native::copy() {
         Ok(()) => {
             thread::sleep(Duration::from_millis(150));
             clipboard.read_text().unwrap_or_default()
@@ -78,7 +78,7 @@ pub fn undo(text: &str) -> Result<(), String> {
         return Err("That dictation is too long to take back.".into());
     }
     for _ in 0..presses {
-        press_plain(KEYCODE_DELETE)?;
+        native::delete()?;
     }
     Ok(())
 }
@@ -102,17 +102,31 @@ fn erase_count(text: &str) -> usize {
     count
 }
 
-pub fn accessibility_granted() -> bool {
-    unsafe { AXIsProcessTrusted() }
-}
+pub use native::accessibility_granted;
 
-fn press_plain(keycode: u16) -> Result<(), String> {
-    press(keycode, 0, UNDO_KEY_GAP)
-}
+// Past this the deletions would take long enough that the user would type over them.
+const MAX_UNDO_PRESSES: usize = 1200;
 
-fn press_cmd(keycode: u16) -> Result<(), String> {
-    press(keycode, FLAG_COMMAND, Duration::from_millis(15))
-}
+/// macOS: keystrokes posted through Quartz, which needs the Accessibility permission.
+#[cfg(not(desktop_engine))]
+mod native {
+    use std::{ffi::c_void, thread, time::Duration};
+
+    pub fn accessibility_granted() -> bool {
+        unsafe { AXIsProcessTrusted() }
+    }
+
+    pub fn paste() -> Result<(), String> {
+        press(KEYCODE_V, FLAG_COMMAND, Duration::from_millis(15))
+    }
+
+    pub fn copy() -> Result<(), String> {
+        press(KEYCODE_C, FLAG_COMMAND, Duration::from_millis(15))
+    }
+
+    pub fn delete() -> Result<(), String> {
+        press(KEYCODE_DELETE, 0, UNDO_KEY_GAP)
+    }
 
 fn press(keycode: u16, flags: u64, gap: Duration) -> Result<(), String> {
     unsafe {
@@ -150,8 +164,6 @@ const KEYCODE_DELETE: u16 = 51;
 // Long enough for the app in front to see every press, short enough that taking a whole
 // paragraph back still feels immediate.
 const UNDO_KEY_GAP: Duration = Duration::from_micros(900);
-// Past this the deletions would take long enough that the user would type over them.
-const MAX_UNDO_PRESSES: usize = 1200;
 const FLAG_COMMAND: u64 = 1 << 20;
 const HID_EVENT_TAP: u32 = 0;
 const EVENT_SOURCE_HID_SYSTEM_STATE: i32 = 1;
@@ -173,6 +185,52 @@ extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(cf: *mut c_void);
+}
+}
+
+/// Windows and Linux: keystrokes through enigo. Windows needs no permission; Linux needs
+/// an X11 session, since Wayland doesn't let apps type into other apps.
+#[cfg(desktop_engine)]
+mod native {
+    use std::{thread, time::Duration};
+
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+
+    // The modifier that pastes and copies: Command when testing on a Mac.
+    const SHORTCUT: Key = if cfg!(target_os = "macos") { Key::Meta } else { Key::Control };
+
+    fn keyboard() -> Result<Enigo, String> {
+        Enigo::new(&Settings::default()).map_err(|e| format!("Couldn't type into other apps: {e}"))
+    }
+
+    pub fn accessibility_granted() -> bool {
+        keyboard().is_ok()
+    }
+
+    fn chord(letter: char) -> Result<(), String> {
+        let mut keys = keyboard()?;
+        let fail = |e: enigo::InputError| e.to_string();
+        keys.key(SHORTCUT, Direction::Press).map_err(fail)?;
+        thread::sleep(Duration::from_millis(10));
+        let pressed = keys.key(Key::Unicode(letter), Direction::Click).map_err(fail);
+        thread::sleep(Duration::from_millis(10));
+        keys.key(SHORTCUT, Direction::Release).map_err(fail)?;
+        pressed
+    }
+
+    pub fn paste() -> Result<(), String> {
+        chord('v')
+    }
+
+    pub fn copy() -> Result<(), String> {
+        chord('c')
+    }
+
+    pub fn delete() -> Result<(), String> {
+        keyboard()?.key(Key::Backspace, Direction::Click).map_err(|e| e.to_string())?;
+        thread::sleep(Duration::from_micros(900));
+        Ok(())
+    }
 }
 
 #[cfg(test)]

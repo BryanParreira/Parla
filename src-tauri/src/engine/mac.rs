@@ -1,5 +1,10 @@
-use serde::{Deserialize, Serialize};
+//! The Swift engine: Parakeet on the Neural Engine and Apple Intelligence, through the
+//! swift-lib package.
+
+use serde::Deserialize;
 use swift_rs::{swift, Bool, Int, SRString};
+
+use super::{InputDevice, ModelStatus, Release, StartOptions, Transcript};
 
 swift!(fn parla_model_status() -> SRString);
 swift!(fn parla_prepare_model() -> Bool);
@@ -28,67 +33,6 @@ swift!(fn parla_play_cue(start: Bool) -> Bool);
 swift!(fn parla_duck_audio(enable: Bool, mute: Bool, pause: Bool) -> Bool);
 swift!(fn parla_float_overlay(window: Int) -> Bool);
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelStatus {
-    pub state: String,
-    pub progress: Option<f64>,
-    pub message: Option<String>,
-    #[serde(default)]
-    pub streaming: String,
-    #[serde(default)]
-    pub punctuation: String,
-    #[serde(default)]
-    pub punctuation_progress: Option<f64>,
-    #[serde(default)]
-    pub enhance: String,
-    #[serde(default)]
-    pub whisper: String,
-    #[serde(default)]
-    pub whisper_progress: Option<f64>,
-    #[serde(default)]
-    pub whisper_message: Option<String>,
-}
-
-impl ModelStatus {
-    pub fn error(message: String) -> Self {
-        Self {
-            state: "error".into(),
-            progress: None,
-            message: Some(message),
-            streaming: "error".into(),
-            punctuation: "error".into(),
-            punctuation_progress: None,
-            enhance: "unavailable".into(),
-            whisper: "idle".into(),
-            whisper_progress: None,
-            whisper_message: None,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Transcript {
-    pub text: String,
-    pub language: Option<String>,
-    pub raw: Option<String>,
-    pub transcribe_ms: Option<u64>,
-    pub enhance_ms: Option<u64>,
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub audio_ms: Option<u64>,
-    /// The text lands straight after a word, so a space goes in front of it.
-    #[serde(default)]
-    pub leading_space: Option<bool>,
-    /// The text lands straight before a word, so a space goes after it.
-    #[serde(default)]
-    pub trailing_space: Option<bool>,
-    /// The style used for the app or site, such as "email".
-    #[serde(default)]
-    pub style: Option<String>,
-    error: Option<String>,
-}
-
 pub fn status() -> ModelStatus {
     let raw = unsafe { parla_model_status() };
     serde_json::from_str(raw.as_str()).unwrap_or_else(|e| ModelStatus::error(e.to_string()))
@@ -96,26 +40,6 @@ pub fn status() -> ModelStatus {
 
 pub fn prepare() {
     let _ = unsafe { parla_prepare_model() };
-}
-
-/// How a dictation should be handled, fixed when recording starts.
-pub struct StartOptions<'a> {
-    pub enhance: bool,
-    pub quick: bool,
-    pub dictionary: &'a [String],
-    pub match_app: bool,
-    /// The user's app rules, one "app\tstyle" per line.
-    pub rules: String,
-    pub live: bool,
-    pub device: Option<&'a str>,
-    pub level: &'a str,
-    pub use_context: bool,
-    pub formatting: bool,
-    pub whisper: bool,
-    /// A language code to force, or empty to detect it.
-    pub language: &'a str,
-    /// Boosts the microphone for dictating in a whisper.
-    pub soft_voice: bool,
 }
 
 // Lists cross as one newline-separated string rather than a shared array, which keeps
@@ -166,14 +90,6 @@ pub fn prepare_whisper() {
 /// The focused field's text, or empty when it is a password field or unreadable.
 pub fn focused_text() -> String {
     unsafe { parla_focused_text() }.as_str().to_string()
-}
-
-#[derive(Deserialize)]
-pub struct Release {
-    pub version: String,
-    pub url: String,
-    pub download: Option<String>,
-    pub error: Option<String>,
 }
 
 /// Downloads `url` to `destination`, blocking until it is done.
@@ -227,12 +143,6 @@ fn parse_transcript(raw: SRString) -> Result<Transcript, String> {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct InputDevice {
-    pub uid: String,
-    pub name: String,
-}
-
 pub fn input_devices() -> Vec<InputDevice> {
     serde_json::from_str(unsafe { parla_input_devices() }.as_str()).unwrap_or_default()
 }
@@ -271,6 +181,9 @@ pub fn run_command(instruction: &str, passage: &str) -> Result<String, String> {
         None => Ok(result.text),
     }
 }
+
+/// Nothing to free: the Swift engine tears itself down with the process.
+pub fn shutdown() {}
 
 pub fn cancel() {
     let _ = unsafe { parla_cancel() };

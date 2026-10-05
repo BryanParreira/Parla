@@ -2,12 +2,16 @@ mod engine;
 mod formatting;
 mod history;
 mod hotkey;
+mod keys;
 mod learn;
 mod paste;
 mod settings;
 mod snippets;
 mod storage;
+#[cfg(target_os = "macos")]
 mod updater;
+#[cfg(not(target_os = "macos"))]
+mod desktop_update;
 
 use std::{
     sync::{
@@ -132,13 +136,25 @@ fn open_privacy_settings(pane: String) -> Result<(), String> {
         "accessibility" => "Privacy_Accessibility",
         _ => return Err(format!("Unknown settings pane: {pane}")),
     };
-    std::process::Command::new("open")
+    #[cfg(target_os = "macos")]
+    return std::process::Command::new("open")
         .arg(format!(
             "x-apple.systempreferences:com.apple.preference.security?{anchor}"
         ))
         .spawn()
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    // Windows has a microphone privacy page; typing into other apps needs no permission.
+    #[cfg(target_os = "windows")]
+    return match anchor {
+        "Privacy_Microphone" => desktop_update::open_url("ms-settings:privacy-microphone"),
+        _ => Ok(()),
+    };
+    #[cfg(target_os = "linux")]
+    {
+        let _ = anchor;
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -172,7 +188,28 @@ enum UpdateProgress {
     Restarting,
 }
 
+/// Downloads `url` to `file`, reporting progress to the window as it goes.
+fn download_with_progress(handle: &AppHandle, url: &str, file: &std::path::Path) -> Result<(), String> {
+    let done = Arc::new(AtomicBool::new(false));
+    let reporter = {
+        let done = done.clone();
+        let handle = handle.clone();
+        thread::spawn(move || {
+            while !done.load(Ordering::Relaxed) {
+                let progress = engine::download_progress();
+                let _ = handle.emit("update-progress", UpdateProgress::Downloading { progress });
+                thread::sleep(Duration::from_millis(200));
+            }
+        })
+    };
+    let downloaded = engine::download(url, file);
+    done.store(true, Ordering::Relaxed);
+    let _ = reporter.join();
+    downloaded
+}
+
 /// Downloads, checks and installs an update, then quits so the new version can open.
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn install_update(app: AppHandle, url: String) -> Result<(), String> {
     let target = updater::installed_bundle()
@@ -190,23 +227,7 @@ async fn install_update(app: AppHandle, url: String) -> Result<(), String> {
             let _ = std::fs::remove_dir_all(&work);
             std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
             let dmg = work.join("Parla.dmg");
-
-            let done = Arc::new(AtomicBool::new(false));
-            let reporter = {
-                let done = done.clone();
-                let handle = handle.clone();
-                thread::spawn(move || {
-                    while !done.load(Ordering::Relaxed) {
-                        let progress = engine::download_progress();
-                        let _ = handle.emit("update-progress", UpdateProgress::Downloading { progress });
-                        thread::sleep(Duration::from_millis(200));
-                    }
-                })
-            };
-            let downloaded = engine::download(&url, &dmg);
-            done.store(true, Ordering::Relaxed);
-            let _ = reporter.join();
-            downloaded?;
+            download_with_progress(&handle, &url, &dmg)?;
 
             let _ = handle.emit("update-progress", UpdateProgress::Verifying);
             let new_app = updater::extract(&dmg, &work)?;
@@ -228,6 +249,31 @@ async fn install_update(app: AppHandle, url: String) -> Result<(), String> {
             Err(message)
         }
     }
+}
+
+/// Downloads the installer (Windows) or AppImage (Linux) and hands over to it.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn install_update(app: AppHandle, url: String) -> Result<(), String> {
+    desktop_update::supported()?;
+    if !is_release_url(&url) {
+        return Err("That isn't a Parla release.".into());
+    }
+    let name = desktop_update::file_name(&url)?;
+    let handle = app.clone();
+    let work = std::env::temp_dir().join(format!("parla-update-{}", std::process::id()));
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+        let file = work.join(name);
+        download_with_progress(&handle, &url, &file)?;
+        let _ = handle.emit("update-progress", UpdateProgress::Restarting);
+        desktop_update::install(&file, std::process::id())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -288,11 +334,14 @@ fn is_release_url(url: &str) -> bool {
 #[tauri::command]
 fn open_release(url: String) -> Result<(), String> {
     let target = if is_release_url(&url) { url } else { RELEASES_PAGE.to_string() };
-    std::process::Command::new("open")
+    #[cfg(target_os = "macos")]
+    return std::process::Command::new("open")
         .arg(target)
         .spawn()
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    #[cfg(not(target_os = "macos"))]
+    return desktop_update::open_url(&target);
 }
 
 // While this is on the dictation key is only reported, never acted on, so the user can
@@ -737,11 +786,25 @@ fn set_tray_recording(app: &AppHandle, recording: bool) {
         return;
     };
     let bytes = if recording { TRAY_RECORDING_ICON } else { TRAY_ICON };
-    if let Ok(icon) = Image::from_bytes(bytes) {
+    if let Ok(icon) = tray_image(bytes) {
         let _ = tray.set_icon(Some(icon));
         let _ = tray.set_icon_as_template(true);
     }
     let _ = tray.set_tooltip(Some(if recording { "Parla — listening" } else { "Parla" }));
+}
+
+/// The tray icons are black template images, which macOS recolors for the menu bar.
+/// Windows and Linux draw icons as they are, on dark taskbars, so they are made white.
+fn tray_image(bytes: &[u8]) -> tauri::Result<Image<'static>> {
+    let image = Image::from_bytes(bytes)?;
+    if cfg!(target_os = "macos") {
+        return Ok(image.to_owned());
+    }
+    let mut rgba = image.rgba().to_vec();
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel[..3].fill(255);
+    }
+    Ok(Image::new_owned(rgba, image.width(), image.height()))
 }
 
 const TRANSFORM_PREFIX: &str = "transform:";
@@ -962,7 +1025,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = tray_menu(app, &settings, &recent)?;
 
     TrayIconBuilder::with_id("parla")
-        .icon(Image::from_bytes(TRAY_ICON)?)
+        .icon(tray_image(TRAY_ICON)?)
         .icon_as_template(true)
         .tooltip("Parla")
         .menu(&menu)
@@ -1051,7 +1114,10 @@ pub fn run() {
     app.run(|app, event| match event {
         tauri::RunEvent::Reopen { .. } => show_main(app),
         // Quitting mid-dictation would otherwise leave the Mac silent.
-        tauri::RunEvent::Exit => engine::duck_audio(false),
+        tauri::RunEvent::Exit => {
+            engine::duck_audio(false);
+            engine::shutdown();
+        }
         _ => {}
     });
 }

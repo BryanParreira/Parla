@@ -5,13 +5,8 @@ use tauri::AppHandle;
 
 use crate::storage;
 
-/// macOS virtual keycode for Caps Lock. It latches instead of reporting a clean
-/// press and release, so it is never part of a shortcut.
-pub const CAPS_LOCK: u16 = 57;
-/// Command, Shift, Option, Control and Globe/Fn, left and right.
-pub const MODIFIERS: [u16; 9] = [54, 55, 56, 58, 59, 60, 61, 62, 63];
+use crate::keys::{CAPS_LOCK, MAX_KEYCODE, MODIFIERS};
 const MAX_GROUPS: usize = 3;
-const MAX_KEYCODE: u16 = 127;
 /// Enough for names, jargon and product spellings without bloating the prompt the
 /// on-device model has to read on every dictation.
 const MAX_TERMS: usize = 40;
@@ -151,7 +146,7 @@ pub struct Hotkey {
 impl Default for Hotkey {
     fn default() -> Self {
         Self {
-            groups: vec![vec![58, 61]],
+            groups: crate::keys::DEFAULT_HOTKEY.iter().map(|group| group.to_vec()).collect(),
         }
     }
 }
@@ -186,7 +181,7 @@ impl Hotkey {
             .iter()
             .any(|group| group.iter().all(|key| MODIFIERS.contains(key)))
         {
-            return Err("Include a modifier like ⌘, ⌥, ⌃, ⇧ or fn.".into());
+            return Err(crate::keys::MODIFIER_HINT.into());
         }
         Ok(())
     }
@@ -501,6 +496,8 @@ mod tests {
         assert_eq!(many.dictionary.len(), MAX_TERMS);
     }
 
+    // Keycodes are macOS ones; each platform numbers keys its own way.
+    #[cfg(target_os = "macos")]
     #[test]
     fn refuses_a_repeat_shortcut_that_clashes_with_dictation() {
         let hotkey = Hotkey { groups: vec![vec![58, 61]] };
@@ -512,6 +509,8 @@ mod tests {
         assert!(settings.validate().is_err());
     }
 
+    // Keycodes are macOS ones; each platform numbers keys its own way.
+    #[cfg(target_os = "macos")]
     #[test]
     fn keeps_every_shortcut_distinct() {
         let repeat = Hotkey { groups: vec![vec![59, 62], vec![49]] };
@@ -529,6 +528,8 @@ mod tests {
         assert!(settings.validate().is_ok());
     }
 
+    // Keycodes are macOS ones; each platform numbers keys its own way.
+    #[cfg(target_os = "macos")]
     #[test]
     fn refuses_an_undo_shortcut_that_clashes_with_another() {
         let shared = Hotkey { groups: vec![vec![54]] };
@@ -613,6 +614,8 @@ mod tests {
         assert_eq!(Transform::resolve("please", &transforms), None);
     }
 
+    // Keycodes are macOS ones; each platform numbers keys its own way.
+    #[cfg(target_os = "macos")]
     #[test]
     fn rejects_shortcuts_that_would_swallow_typing() {
         assert!(Hotkey { groups: vec![vec![49]] }.validate().is_err());

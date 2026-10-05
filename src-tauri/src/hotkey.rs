@@ -11,7 +11,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
-    settings::{Hotkey, SettingsStore, CAPS_LOCK},
+    keys::{self, Held},
+    settings::{Hotkey, SettingsStore},
     Command, Mode,
 };
 
@@ -30,9 +31,6 @@ const SILENCE_STOP: Duration = Duration::from_secs(8);
 // Microphone RMS above this counts as the user talking. Room noise usually sits well
 // below it and speech well above.
 const VOICE_LEVEL: f32 = 0.006;
-const HID_SYSTEM_STATE: i32 = 1;
-// Keycodes above this are function keys the HID system never reports as held.
-const MAX_KEYCODE: u16 = 127;
 
 /// Set while the settings window is recording a new shortcut. The same poll loop
 /// reports the keys being held instead of starting dictation, so recording needs no
@@ -59,31 +57,19 @@ struct CaptureEvent {
     done: bool,
 }
 
-fn is_down(key: u16) -> bool {
-    unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, key) }
-}
-
-fn pressed_keys() -> Vec<u16> {
-    (0..=MAX_KEYCODE)
-        .filter(|key| *key != CAPS_LOCK && is_down(*key))
-        .collect()
-}
-
-fn is_held(hotkey: &Hotkey) -> bool {
+fn is_held(hotkey: &Hotkey, held: &Held) -> bool {
     !hotkey.groups.is_empty()
         && hotkey
             .groups
             .iter()
-            .all(|group| group.iter().any(|key| is_down(*key)))
+            .all(|group| group.iter().any(|key| held.contains(*key)))
 }
 
 /// Any other key held alongside the shortcut means the user is typing something like
-/// Option+Arrow, not talking. Only worth scanning for while the shortcut itself is held.
-fn is_interfering(hotkey: &Hotkey) -> bool {
+/// Option+Arrow, not talking.
+fn is_interfering(hotkey: &Hotkey, held: &Held) -> bool {
     let keys = hotkey.keys();
-    (0..=MAX_KEYCODE)
-        .filter(|key| *key != CAPS_LOCK && !keys.contains(key))
-        .any(is_down)
+    held.keys().any(|key| !keys.contains(&key))
 }
 
 #[derive(Clone, Copy)]
@@ -130,16 +116,18 @@ impl Watcher {
             .is_some_and(|at| now.duration_since(at) >= SILENCE_STOP)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn tick(
         &mut self,
+        keys: &Held,
         hotkey: &Hotkey,
         hands_free: bool,
         auto_stop: bool,
         mode: Mode,
         commands: &Sender<Command>,
     ) {
-        let held = is_held(hotkey);
-        let blocked = held && is_interfering(hotkey);
+        let held = is_held(hotkey, keys);
+        let blocked = held && is_interfering(hotkey, keys);
         let send = |command| {
             let _ = commands.send(command);
         };
@@ -218,9 +206,15 @@ struct TapWatcher {
 }
 
 impl TapWatcher {
-    fn tick(&mut self, hotkey: &Hotkey, commands: &Sender<Command>, command: fn() -> Command) {
-        let held = is_held(hotkey);
-        let blocked = held && is_interfering(hotkey);
+    fn tick(
+        &mut self,
+        keys: &Held,
+        hotkey: &Hotkey,
+        commands: &Sender<Command>,
+        command: fn() -> Command,
+    ) {
+        let held = is_held(hotkey, keys);
+        let blocked = held && is_interfering(hotkey, keys);
 
         self.state = Some(match self.state.unwrap_or(State::Idle) {
             State::Idle if held && blocked => State::Blocked,
@@ -254,6 +248,7 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
         loop {
             thread::sleep(POLL_INTERVAL);
 
+            let keys = keys::held();
             if app.state::<CaptureState>().is_active() {
                 // A dictation already under way would otherwise be transcribed and
                 // pasted using the keys the user is only trying to record.
@@ -268,13 +263,14 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
                 repeat = TapWatcher::default();
                 undo = TapWatcher::default();
                 transform = TapWatcher::default();
-                capture(&app, &mut captured);
+                capture(&app, &keys, &mut captured);
                 continue;
             }
             captured.clear();
 
             let settings = app.state::<SettingsStore>().get();
             dictation.tick(
+                &keys,
                 &settings.hotkey,
                 settings.hands_free,
                 settings.auto_stop_silence,
@@ -283,7 +279,7 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
             );
             match &settings.command_hotkey {
                 // Latching a command would leave nothing to say when it should end.
-                Some(hotkey) => command.tick(hotkey, false, false, Mode::Command, &commands),
+                Some(hotkey) => command.tick(&keys, hotkey, false, false, Mode::Command, &commands),
                 // A shortcut removed mid-recording still has to end that recording.
                 None if command.recording() => {
                     let _ = commands.send(Command::Cancel(Mode::Command));
@@ -292,13 +288,13 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
                 None => {}
             }
             if let Some(hotkey) = &settings.repeat_hotkey {
-                repeat.tick(hotkey, &commands, || Command::Repeat);
+                repeat.tick(&keys, hotkey, &commands, || Command::Repeat);
             }
             if let Some(hotkey) = &settings.undo_hotkey {
-                undo.tick(hotkey, &commands, || Command::Undo);
+                undo.tick(&keys, hotkey, &commands, || Command::Undo);
             }
             if let Some(hotkey) = &settings.transform_hotkey {
-                transform.tick(hotkey, &commands, || Command::PickTransform);
+                transform.tick(&keys, hotkey, &commands, || Command::PickTransform);
             }
         }
     });
@@ -306,8 +302,8 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
 
 // Keys are accumulated rather than sampled, so pressing Control then Space records
 // both even though they are never pressed on exactly the same tick.
-fn capture(app: &AppHandle, captured: &mut Vec<u16>) {
-    let pressed = pressed_keys();
+fn capture(app: &AppHandle, keys: &Held, captured: &mut Vec<u16>) {
+    let pressed: Vec<u16> = keys.keys().collect();
 
     if pressed.is_empty() {
         if !captured.is_empty() {
@@ -338,7 +334,3 @@ fn emit(app: &AppHandle, codes: &[u16], done: bool) {
     );
 }
 
-#[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
-    fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
-}
