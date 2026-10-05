@@ -761,11 +761,15 @@ fn float_overlay(app: &AppHandle) {
     let Some(overlay) = app.get_webview_window("overlay") else {
         return;
     };
+    // Elsewhere the window's always-on-top setting is all there is.
+    #[cfg(target_os = "macos")]
     let _ = app.run_on_main_thread(move || {
         if let Ok(window) = overlay.ns_window() {
             engine::float_overlay(window);
         }
     });
+    #[cfg(not(target_os = "macos"))]
+    let _ = overlay;
 }
 
 fn show_main(app: &AppHandle) {
@@ -1112,6 +1116,8 @@ pub fn run() {
         .expect("error while building Parla");
 
     app.run(|app, event| match event {
+        // Clicking the Dock icon. Other platforms reopen the window from the tray.
+        #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => show_main(app),
         // Quitting mid-dictation would otherwise leave the Mac silent.
         tauri::RunEvent::Exit => {

@@ -1,9 +1,11 @@
 # The speech library (sherpa-onnx with ONNX Runtime) is linked statically on Windows
 # and Linux, so Parla ships as one executable with no extra libraries to install.
 
-# Its Windows build uses the static C runtime; Rust has to match it.
+# Its Windows build uses the static C runtime, which Rust has to match, and calls into
+# advapi32 (event tracing, registry). sherpa-rs links itself as a DLL too, so the
+# library is passed to every link rather than only Parla's.
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=advapi32.lib"]
 
 # Its Linux build isn't position-independent, which sherpa-rs asks to match like this.
 [target.x86_64-unknown-linux-gnu]
