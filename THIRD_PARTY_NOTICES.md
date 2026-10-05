@@ -42,3 +42,15 @@ license, found in its repository. The speech models are NVIDIA Parakeet (CC-BY-4
 downloaded at first launch, and optionally OpenAI Whisper large-v3 turbo (MIT), downloaded
 only if the user switches to it. Both are Core ML conversions published by
 [aufklarer](https://huggingface.co/aufklarer) and used under their own licenses.
+
+### Windows and Linux
+
+The Windows and Linux builds also include [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
+(Apache-2.0) and [ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT) for speech,
+[llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) for Enhance and Command Mode,
+[cpal](https://github.com/RustAudio/cpal) (Apache-2.0) for the microphone and
+[enigo](https://github.com/enigo-rs/enigo) (MIT) for typing, each under its own license. They
+download, at first launch, the ONNX conversion of NVIDIA Parakeet TDT v3 (CC-BY-4.0) published
+by [csukuangfj](https://huggingface.co/csukuangfj), and
+[Qwen2.5 1.5B Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) (Apache-2.0)
+by the Qwen team.

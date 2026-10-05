@@ -3,12 +3,14 @@
 </p>
 
 <p align="center">
-  <b>Fast, private dictation for macOS.</b><br>
+  <b>Fast, private dictation for macOS, with Windows and Linux in preview.</b><br>
   Hold a key, say what you want to write, let go. It's typed into whatever app you're using.
 </p>
 
 <p align="center">
   <a href="../../releases/latest"><img src="https://img.shields.io/badge/download-macOS-111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS"></a>
+  <a href="../../releases/latest"><img src="https://img.shields.io/badge/download-Windows%20preview-111?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows (preview)"></a>
+  <a href="../../releases/latest"><img src="https://img.shields.io/badge/download-Linux%20preview-111?style=for-the-badge&logo=linux&logoColor=white" alt="Download for Linux (preview)"></a>
 </p>
 
 <p align="center">
@@ -73,6 +75,15 @@ On first launch Parla downloads its speech models (about 720 MB) from Hugging Fa
 - macOS 15 Sequoia or later
 - For Enhance and Command Mode: macOS 26 with Apple Intelligence turned on. Without them, Parla still types punctuated text.
 
+### Windows and Linux (preview)
+
+New in 1.6.0 and still being tested on real machines, so expect rough edges.
+
+- **Windows 10 or 11 (64-bit):** download `Parla_…_x64-setup.exe` from [Releases](../../releases/latest) and run it. The installer isn't code-signed yet, so Windows shows "Windows protected your PC": click **More info › Run anyway**. Hold **Ctrl + Windows** to dictate.
+- **Linux (64-bit):** download the `.AppImage` (any distribution: `chmod +x` it and run it) or the `.deb` (Ubuntu, Debian, Mint, Pop!_OS). Use an **X11** session; Wayland doesn't let apps watch the shortcut or type into other apps. Hold **Ctrl + Super** to dictate.
+
+On first launch Parla downloads the speech model (about 670 MB) and a small local model for Enhance and Command Mode (Qwen2.5 1.5B, about 1.1 GB). Everything then runs on the computer's processor, offline. Not on Windows and Linux yet: fitting dictations into the sentence around the cursor, live preview, the transform menu, Whisper, and lowering other audio while you talk. If something goes wrong, the log is at `%LOCALAPPDATA%\Parla\parla.log` on Windows and `~/.local/share/parla/parla.log` on Linux; it records steps and timings, never what you said.
+
 ## Using Parla
 
 | Action | How |
@@ -97,6 +108,7 @@ You can change any shortcut in **Settings**, including combinations like Control
 
 - **Speech recognition:** [NVIDIA Parakeet TDT v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), running as a Core ML model on the Neural Engine. It punctuates, capitalizes and recognizes 25 languages on its own. For other languages, [OpenAI Whisper large-v3 turbo](https://huggingface.co/openai/whisper-large-v3-turbo) is an optional download.
 - **Cleanup:** Apple's on-device [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework. The cleanup is skipped when there's nothing to fix, which saves about half a second.
+- **On Windows and Linux:** the same Parakeet model through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), and [Qwen2.5 1.5B Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct) through [llama.cpp](https://github.com/ggml-org/llama.cpp) for cleanup, with the same instructions and safety checks as on the Mac.
 - **Speed:** while you pause, Parla transcribes what you've said so far, so it's often finished by the time you let go.
 
 ## Build from source
@@ -108,6 +120,8 @@ pnpm install
 pnpm app:dev          # run in development
 pnpm tauri build      # build Parla.app
 ```
+
+Windows and Linux builds use the Rust engine instead of the Swift one: `pnpm exec tauri build --features desktop-engine`. They are built by [GitHub Actions](.github/workflows/desktop.yml); the same engine can be tried on a Mac with `--features desktop-engine`.
 
 To build a signed, notarized DMG, store notarization credentials once and then run the release script:
 
