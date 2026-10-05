@@ -22,6 +22,10 @@ jobs:
           - os: ubuntu-22.04
             name: linux
     runs-on: ${{ matrix.os }}
+    env:
+      # llama.cpp has to use the static C runtime on Windows, like the prebuilt speech
+      # library it is linked with. Ignored elsewhere.
+      LLAMA_STATIC_CRT: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -45,6 +49,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Bumped when a native library's build settings change, since Cargo doesn't
+          # rebuild it for an environment change on its own.
+          prefix-key: v2
 
       - run: pnpm install --frozen-lockfile
 

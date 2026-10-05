@@ -455,6 +455,8 @@ mod tests {
         serde_json::from_str(json).unwrap()
     }
 
+    // Keycodes are macOS ones; each platform numbers keys its own way.
+    #[cfg(target_os = "macos")]
     #[test]
     fn reads_names_saved_by_earlier_builds() {
         assert_eq!(parse("\"option\"").groups, vec![vec![58, 61]]);
@@ -464,6 +466,8 @@ mod tests {
         assert_eq!(parse("\"ctrl+space\"").groups, Hotkey::default().groups);
     }
 
+    // Keycodes are macOS ones; each platform numbers keys its own way.
+    #[cfg(target_os = "macos")]
     #[test]
     fn falls_back_when_the_stored_shortcut_is_unusable() {
         assert_eq!(parse(r#"{"groups":[[49]]}"#).groups, Hotkey::default().groups);
