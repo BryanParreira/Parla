@@ -32,6 +32,13 @@ pub struct Entry {
     /// From letting go of the key to the text being pasted: the wait the user feels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<u64>,
+    /// Name of the app the text was dictated into. The name only, and only so the
+    /// stats can show where dictation is actually being used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    /// The style Parla used there, such as "email", so it's clear what was detected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
 }
 
 pub struct HistoryStore {
@@ -54,7 +61,13 @@ impl HistoryStore {
         self.lock().first().cloned()
     }
 
-    pub fn add(&self, transcript: &Transcript, duration_ms: u64, latency_ms: u64) -> Entry {
+    pub fn add(
+        &self,
+        transcript: &Transcript,
+        duration_ms: u64,
+        latency_ms: u64,
+        app: Option<String>,
+    ) -> Entry {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -70,6 +83,8 @@ impl HistoryStore {
             transcribe_ms: transcript.transcribe_ms,
             enhance_ms: transcript.enhance_ms,
             latency_ms: Some(latency_ms),
+            app,
+            style: transcript.style.clone(),
         };
 
         let mut entries = self.lock();

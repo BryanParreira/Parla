@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/macOS-15%2B-111?style=flat-square" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-native-111?style=flat-square" alt="Apple Silicon">
   <img src="https://img.shields.io/badge/audio-never%20leaves%20your%20Mac-111?style=flat-square" alt="Audio never leaves your Mac">
-  <img src="https://img.shields.io/badge/languages-25-111?style=flat-square" alt="25 languages">
+  <img src="https://img.shields.io/badge/languages-99-111?style=flat-square" alt="Up to 99 languages">
 </p>
 
 ---
@@ -25,9 +25,9 @@
 Most dictation apps send your voice to a server. Parla doesn't. Speech recognition runs on your Mac's Neural Engine, and text cleanup runs on Apple Intelligence on the same machine. No account and no subscription, and it works on a plane.
 
 - **Private.** Your audio and your text stay on your Mac.
-- **Fast.** Most dictations are typed about a second after you let go. Parla shows the time for every one.
+- **Fast.** Most dictations are typed well under a second after you let go. Parla shows the time for every one.
 - **Everywhere.** Works in any app that takes text: Slack, Mail, Notion, VS Code, your browser.
-- **Multilingual.** Speak any of 25 European languages. Parla detects which one, so there's nothing to switch.
+- **Multilingual.** Speak any of 25 European languages and Parla detects which one. Switch on Whisper for 99 languages, including Chinese, Japanese, Arabic and Hindi.
 
 ## Features
 
@@ -35,15 +35,22 @@ Most dictation apps send your voice to a server. Parla doesn't. Speech recogniti
 |---|---|
 | **Hold to talk** | Hold the dictation key, speak, release. The text is typed where your cursor is. |
 | **Hands-free** | Double-tap the key to keep recording without holding it. Stops when you tap again or go quiet. |
-| **Enhance** | Removes "um", "uh" and false starts, and keeps only your final version when you correct yourself. Runs on-device with Apple Intelligence. |
+| **Enhance** | Removes "um", "uh" and false starts, and keeps only your final version when you correct yourself. Runs on-device with Apple Intelligence. Choose how far it goes: Light, Standard or Polished. |
+| **Undo** | Typed into the wrong window? One key takes the last dictation straight back out. |
+| **Never in passwords** | Parla refuses to listen while a password field has focus, or while a password manager or banking app is in front. |
 | **Command Mode** | Select text, hold a second key and say "make this shorter" or "turn this into a list". The selection is rewritten in place. |
-| **Match the app** | Casual in chat, polished in email, untouched in code editors. Parla only looks at which app is in front, never what's on screen. |
-| **Your words** | Teach Parla the names, jargon and product spellings it gets wrong. |
+| **Transforms** | Saved rewrites like "Formal", "Shorter" or "Bullet points". Say the name in Command Mode, or pick one from the menu bar icon. |
+| **Match the app** | Casual in chat, polished in email, untouched in code editors. Add your own rules per app, including "no cleanup". Parla only looks at which app is in front. |
+| **Fits your sentence** | Dictate into the middle of a sentence and Parla carries it on: no stray capital or full stop, and a space where one is needed. It reads only the few sentences before your cursor and the words right after it, never password fields, and stores nothing. |
+| **Spoken formatting** | Say "new line", "new paragraph", "bullet point", "comma" or "question mark", in English or Portuguese. |
+| **Your words** | Teach Parla the names, jargon and product spellings it gets wrong. When you fix a name right after a dictation, Parla offers to remember it. |
 | **Snippets** | Say "my email" and your address is typed. |
 | **Live preview** | Watch your words appear as you speak (optional). |
 | **History** | Search everything you've dictated and export it to Markdown. It's stored only on your Mac. |
+| **Stats** | Words, speaking speed, time saved, your streak and which apps you dictate into. |
 | **Quiet mode** | Mutes music and video while you speak, then puts the volume back exactly as it was. |
 | **Any microphone** | Pick the input device, or let it follow the system default. |
+| **Update check** | Optional and off by default: once a day, ask GitHub whether a newer Parla is out. It's the only request Parla makes on its own. |
 
 ## Install
 
@@ -58,7 +65,7 @@ Most dictation apps send your voice to a server. Parla doesn't. Speech recogniti
    - **Microphone**, to hear you.
    - **Accessibility**, to type into other apps. Without it, dictations are copied to the clipboard instead.
 
-On first launch Parla downloads its speech models (about 720 MB) from Hugging Face. After that it works fully offline. The app is signed and notarized by Apple.
+On first launch Parla downloads its speech models (about 720 MB) from Hugging Face, and spends about half a minute optimizing them for your Mac's Neural Engine. After that it works fully offline. Whisper, if you switch to it, is a one-time 1.6 GB download. The app is signed and notarized by Apple.
 
 ### Requirements
 
@@ -73,8 +80,11 @@ On first launch Parla downloads its speech models (about 720 MB) from Hugging Fa
 | Dictate | Hold **Option** (the default), talk, release |
 | Hands-free | Double-tap the dictation key; tap again to stop |
 | Cancel | Press any other key while holding the dictation key |
-| Rewrite a selection | Select text, hold the Command Mode key, say what to change |
+| Rewrite a selection | Select text, hold the Command Mode key, say what to change or the name of a transform |
+| Apply a transform without speaking | Select text, click Parla in the menu bar, then **Transform Selection** |
+| Format as you speak | Say "new line", "new paragraph", "bullet point", "comma", "question mark" |
 | Paste the last dictation again | Press the repeat key, if you set one |
+| Undo the last dictation | Press the undo key, if you set one, before you type anything else |
 
 You can change any shortcut in **Settings**, including combinations like Control + Option.
 
@@ -85,7 +95,7 @@ You can change any shortcut in **Settings**, including combinations like Control
                               (Neural Engine)      (optional cleanup)
 ```
 
-- **Speech recognition:** [NVIDIA Parakeet TDT v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), running as a Core ML model on the Neural Engine. It punctuates, capitalizes and recognizes 25 languages on its own.
+- **Speech recognition:** [NVIDIA Parakeet TDT v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), running as a Core ML model on the Neural Engine. It punctuates, capitalizes and recognizes 25 languages on its own. For other languages, [OpenAI Whisper large-v3 turbo](https://huggingface.co/openai/whisper-large-v3-turbo) is an optional download.
 - **Cleanup:** Apple's on-device [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework. The cleanup is skipped when there's nothing to fix, which saves about half a second.
 - **Speed:** while you pause, Parla transcribes what you've said so far, so it's often finished by the time you let go.
 

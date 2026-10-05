@@ -1,6 +1,6 @@
 [package]
 name = "parla"
-version = "1.2.1"
+version = "1.5.3"
 description = "Fast, fully local dictation for macOS"
 authors = ["Bryan Bernardo Parreira"]
 license-file = "../LICENSE.md"
@@ -30,3 +30,8 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Xcode 27's linker strips proc-macro dylibs so rustc can no longer load them
+# ("can't find crate for `tauri_macros`"). Only the app itself needs stripping.
+[profile.release.build-override]
+strip = false

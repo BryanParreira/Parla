@@ -38,5 +38,7 @@ Parla is built with open-source libraries, including [Tauri](https://tauri.app),
 [React](https://react.dev), [motion](https://motion.dev), [lucide](https://lucide.dev),
 [swift-rs](https://github.com/Brendonovich/swift-rs) and
 [speech-swift](https://github.com/soniqo/speech-swift). Each is used under its own
-license, found in its repository. The speech models are NVIDIA Parakeet, downloaded
-at first launch and used under their own license.
+license, found in its repository. The speech models are NVIDIA Parakeet (CC-BY-4.0),
+downloaded at first launch, and optionally OpenAI Whisper large-v3 turbo (MIT), downloaded
+only if the user switches to it. Both are Core ML conversions published by
+[aufklarer](https://huggingface.co/aufklarer) and used under their own licenses.

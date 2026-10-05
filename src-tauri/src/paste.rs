@@ -63,11 +63,58 @@ pub fn selection(app: &AppHandle) -> String {
     copied
 }
 
+/// Takes a paste back out by deleting exactly what was inserted. Only sound while the
+/// text is still the last thing in the field, which is why the caller offers it once and
+/// forgets the text afterwards.
+pub fn undo(text: &str) -> Result<(), String> {
+    if !accessibility_granted() {
+        return Err("Parla needs Accessibility permission to take a dictation back.".into());
+    }
+    let presses = erase_count(text);
+    if presses == 0 {
+        return Ok(());
+    }
+    if presses > MAX_UNDO_PRESSES {
+        return Err("That dictation is too long to take back.".into());
+    }
+    for _ in 0..presses {
+        press_plain(KEYCODE_DELETE)?;
+    }
+    Ok(())
+}
+
+/// How many times Delete has to be pressed to remove the text. macOS deletes a whole
+/// character with its accents and its emoji modifiers in one press, so the pieces that
+/// only ever attach to the character before them are not counted.
+fn erase_count(text: &str) -> usize {
+    let mut count = 0usize;
+    let mut joining = false;
+    for character in text.chars() {
+        let attaches = matches!(character,
+            // Combining marks, variation selectors and emoji skin tones.
+            '\u{0300}'..='\u{036F}' | '\u{FE00}'..='\u{FE0F}' | '\u{1F3FB}'..='\u{1F3FF}');
+        let zero_width_joiner = character == '\u{200D}';
+        if !attaches && !zero_width_joiner && !joining {
+            count += 1;
+        }
+        joining = zero_width_joiner;
+    }
+    count
+}
+
 pub fn accessibility_granted() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
+fn press_plain(keycode: u16) -> Result<(), String> {
+    press(keycode, 0, UNDO_KEY_GAP)
+}
+
 fn press_cmd(keycode: u16) -> Result<(), String> {
+    press(keycode, FLAG_COMMAND, Duration::from_millis(15))
+}
+
+fn press(keycode: u16, flags: u64, gap: Duration) -> Result<(), String> {
     unsafe {
         let source = CGEventSourceCreate(EVENT_SOURCE_HID_SYSTEM_STATE);
         if source.is_null() {
@@ -80,10 +127,10 @@ fn press_cmd(keycode: u16) -> Result<(), String> {
             Err("Could not create the keystroke.".into())
         } else {
             // Overrides whatever modifiers are still physically held from the hotkey.
-            CGEventSetFlags(down, FLAG_COMMAND);
-            CGEventSetFlags(up, FLAG_COMMAND);
+            CGEventSetFlags(down, flags);
+            CGEventSetFlags(up, flags);
             CGEventPost(HID_EVENT_TAP, down);
-            thread::sleep(Duration::from_millis(15));
+            thread::sleep(gap);
             CGEventPost(HID_EVENT_TAP, up);
             Ok(())
         };
@@ -99,6 +146,12 @@ fn press_cmd(keycode: u16) -> Result<(), String> {
 
 const KEYCODE_C: u16 = 8;
 const KEYCODE_V: u16 = 9;
+const KEYCODE_DELETE: u16 = 51;
+// Long enough for the app in front to see every press, short enough that taking a whole
+// paragraph back still feels immediate.
+const UNDO_KEY_GAP: Duration = Duration::from_micros(900);
+// Past this the deletions would take long enough that the user would type over them.
+const MAX_UNDO_PRESSES: usize = 1200;
 const FLAG_COMMAND: u64 = 1 << 20;
 const HID_EVENT_TAP: u32 = 0;
 const EVENT_SOURCE_HID_SYSTEM_STATE: i32 = 1;
@@ -120,4 +173,22 @@ extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(cf: *mut c_void);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_what_one_delete_press_removes() {
+        assert_eq!(erase_count(""), 0);
+        assert_eq!(erase_count("Meet at 3."), 10);
+        // Accented letters arrive precomposed, so each is one press.
+        assert_eq!(erase_count("olá"), 3);
+        // A combining accent rides along with the letter it sits on.
+        assert_eq!(erase_count("ola\u{0301}"), 3);
+        // Skin tone and joined emoji come out in one press each.
+        assert_eq!(erase_count("\u{1F44B}\u{1F3FD}"), 1);
+        assert_eq!(erase_count("\u{1F468}\u{200D}\u{1F4BB}"), 1);
+    }
 }

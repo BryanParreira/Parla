@@ -1,7 +1,8 @@
-import { History as HistoryIcon, House, Settings as SettingsIcon } from "lucide-react";
+import { ArrowDownToLine, History as HistoryIcon, House, Settings as SettingsIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useState } from "react";
-import { useDictation, useHistory, useModelStatus, usePermissions, useSettings } from "../lib/hooks";
+import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
+import { useDictation, useHistory, useModelStatus, usePermissions, useSettings, useUpdateCheck, useUpdateInstall } from "../lib/hooks";
 import { api } from "../lib/api";
 import { cx } from "../lib/utils";
 import HistoryPage from "./History";
@@ -25,6 +26,15 @@ export default function App() {
   const entries = useHistory();
   const { phase, error } = useDictation();
   const [page, setPage] = useState<Page>("home");
+  // The menu bar's Settings… and Check for Updates… open a page directly.
+  useEffect(() => {
+    const unlisten = listen<Page>("navigate", (event) => setPage(event.payload));
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, []);
+  const release = useUpdateCheck(!!settings?.checkUpdates && !!settings?.onboarded);
+  const installer = useUpdateInstall();
 
   if (!settings) {
     return <div className="h-full" data-tauri-drag-region />;
@@ -85,7 +95,24 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="mt-auto rounded-xl border border-line bg-surface p-3">
+        {release?.available && (
+          <button
+            onClick={() => installer.install(release.url)}
+            disabled={installer.busy}
+            title={installer.error ?? undefined}
+            className="mt-auto mb-2 flex items-center gap-2.5 rounded-xl border border-line bg-surface px-3 py-2.5 text-left transition-colors hover:bg-raised disabled:cursor-default"
+          >
+            <ArrowDownToLine className="size-4 shrink-0" />
+            <span className="text-[12px] leading-snug">
+              <span className="block font-medium">Parla {release.version} is out</span>
+              <span className={installer.error ? "text-danger" : "text-muted"}>
+                {installer.label ?? (installer.error ? "Couldn't update. Try from Settings" : "Install and restart")}
+              </span>
+            </span>
+          </button>
+        )}
+
+        <div className={cx("rounded-xl border border-line bg-surface p-3", !release?.available && "mt-auto")}>
           <div className="flex items-center gap-2 text-[12px] text-muted">
             <StatusDot
               tone={

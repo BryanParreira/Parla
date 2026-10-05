@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Clock, Gauge, Mic, Type } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarDays, Clock, Flame, Gauge, LayoutGrid, Mic, Type } from "lucide-react";
 import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { api, type Entry, type Hotkey, type ModelStatus, type Permissions } from "../lib/api";
@@ -83,6 +83,13 @@ export default function HomePage({
         <Stat icon={<Clock className="size-4" />} label="Time saved" value={formatSaved(stats.savedMs)} />
       </div>
 
+      {entries.length > 0 && (
+        <div className="grid gap-3 lg:grid-cols-2">
+          <WeekChart days={stats.days} streak={stats.streak} />
+          <TopApps apps={stats.apps} />
+        </div>
+      )}
+
       <section>
         <div className="mb-2.5 flex items-center justify-between">
           <h2 className="text-[13px] font-semibold">Recent</h2>
@@ -122,6 +129,76 @@ function Stat({ icon, label, value }: { icon: ReactNode; label: string; value: s
         <span className="text-[12px]">{label}</span>
       </div>
       <p className="mt-2 text-[22px] font-semibold tracking-tight tabular-nums">{value}</p>
+    </Card>
+  );
+}
+
+function WeekChart({ days, streak }: { days: { day: number; words: number; label: string }[]; streak: number }) {
+  // Scaled to the busiest day, so a quiet week still shows its own shape.
+  const peak = Math.max(...days.map((day) => day.words), 1);
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-muted">
+          <CalendarDays className="size-4" />
+          <span className="text-[12px]">Last 7 days</span>
+        </div>
+        {streak > 1 && (
+          <span className="flex items-center gap-1.5 text-[12px] tabular-nums text-muted">
+            <Flame className="size-3.5" />
+            {streak} day streak
+          </span>
+        )}
+      </div>
+      <div className="mt-4 flex h-[72px] items-end gap-1.5">
+        {days.map((day) => (
+          <div key={day.day} className="group flex flex-1 flex-col items-center gap-1.5" title={`${formatNumber(day.words)} words`}>
+            <motion.div
+              initial={{ height: 0 }}
+              animate={{ height: `${Math.max(2, (day.words / peak) * 100)}%` }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+              className={cx("w-full rounded-[3px]", day.words > 0 ? "bg-fg/70" : "bg-line")}
+            />
+            <span className="text-[10.5px] text-muted">{day.label}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function TopApps({ apps }: { apps: { name: string; words: number }[] }) {
+  const peak = Math.max(...apps.map((app) => app.words), 1);
+  return (
+    <Card className="p-4">
+      <div className="flex items-center gap-2 text-muted">
+        <LayoutGrid className="size-4" />
+        <span className="text-[12px]">Where you dictate</span>
+      </div>
+      {apps.length === 0 ? (
+        <p className="mt-4 text-[12px] text-muted">
+          Dictations from now on remember which app they went into. Only the app's name.
+        </p>
+      ) : (
+        <div className="mt-3 flex flex-col gap-2">
+          {apps.map((app) => (
+            <div key={app.name} className="flex items-center gap-3">
+              <span className="w-28 shrink-0 truncate text-[12px]">{app.name}</span>
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(app.words / peak) * 100}%` }}
+                  transition={{ duration: 0.4, ease: "easeOut" }}
+                  className="h-full rounded-full bg-fg/70"
+                />
+              </div>
+              <span className="w-12 shrink-0 text-right text-[11.5px] tabular-nums text-muted">
+                {formatNumber(app.words)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }

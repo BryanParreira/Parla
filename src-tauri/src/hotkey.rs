@@ -247,6 +247,8 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
         let mut dictation = Watcher::default();
         let mut command = Watcher::default();
         let mut repeat = TapWatcher::default();
+        let mut undo = TapWatcher::default();
+        let mut transform = TapWatcher::default();
         let mut captured: Vec<u16> = Vec::new();
 
         loop {
@@ -264,6 +266,8 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
                 dictation.reset();
                 command.reset();
                 repeat = TapWatcher::default();
+                undo = TapWatcher::default();
+                transform = TapWatcher::default();
                 capture(&app, &mut captured);
                 continue;
             }
@@ -289,6 +293,12 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
             }
             if let Some(hotkey) = &settings.repeat_hotkey {
                 repeat.tick(hotkey, &commands, || Command::Repeat);
+            }
+            if let Some(hotkey) = &settings.undo_hotkey {
+                undo.tick(hotkey, &commands, || Command::Undo);
+            }
+            if let Some(hotkey) = &settings.transform_hotkey {
+                transform.tick(hotkey, &commands, || Command::PickTransform);
             }
         }
     });

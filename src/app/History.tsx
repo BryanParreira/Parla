@@ -125,6 +125,7 @@ export default function HistoryPage({ entries }: { entries: Entry[] }) {
                           {formatTime(entry.createdAt)} · {entry.words} words
                           {entryWpm(entry) > 0 && ` · ${entryWpm(entry)} wpm`}
                           {entry.latencyMs != null && ` · typed in ${formatLatency(entry.latencyMs)}`}
+                          {entry.style && ` · ${entry.style[0].toUpperCase()}${entry.style.slice(1)} style`}
                           {entry.language && entry.language !== "en" && ` · ${languageName(entry.language)}`}
                           {entry.raw && (
                             <button

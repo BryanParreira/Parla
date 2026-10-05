@@ -7,23 +7,78 @@ export type Snippet = { trigger: string; text: string };
 
 export type InputDevice = { uid: string; name: string };
 
+/** A style for one app, matched on its name or bundle id. "off" types the plain transcript. */
+export type AppStyle = "casual" | "formal" | "email" | "code" | "notes" | "off";
+export type AppRule = { app: string; style: AppStyle };
+
+/** A saved Command Mode instruction, run by saying its name or from the menu bar. */
+export type Transform = { name: string; instruction: string };
+
+export type SpeechModel = "parakeet" | "whisper";
+
+/** A word the user keeps fixing after a paste, offered for the dictionary. */
+export type Suggestion = { word: string; heard: string; count: number };
+
+export type UpdateInfo = { available: boolean; version: string; url: string };
+
+export type UpdateProgress =
+  | { phase: "downloading"; progress: number }
+  | { phase: "verifying" }
+  | { phase: "restarting" };
+
+/** How far Enhance may go. Standard is what Parla has always done. */
+export type CleanupLevel = "light" | "standard" | "polished";
+
 export type Settings = {
   hotkey: Hotkey;
   handsFree: boolean;
   repeatHotkey: Hotkey | null;
   commandHotkey: Hotkey | null;
+  undoHotkey: Hotkey | null;
+  transformHotkey: Hotkey | null;
   dictionary: string[];
   appAwareTone: boolean;
   livePreview: boolean;
   autoStopSilence: boolean;
   inputDevice: string | null;
+  softVoice: boolean;
   snippets: Snippet[];
   sounds: boolean;
   muteOtherAudio: boolean;
+  pauseMedia: boolean;
   enhance: boolean;
   quickEnhance: boolean;
+  cleanupLevel: CleanupLevel;
+  pauseInSensitiveApps: boolean;
+  useContext: boolean;
+  spokenFormatting: boolean;
+  appRules: AppRule[];
+  transforms: Transform[];
+  learnWords: boolean;
+  checkUpdates: boolean;
+  speechModel: SpeechModel;
+  /** Language Whisper is told to expect; null detects it. */
+  language: string | null;
   onboarded: boolean;
 };
+
+export const APP_STYLES: { value: AppStyle; label: string }[] = [
+  { value: "casual", label: "Casual" },
+  { value: "formal", label: "Formal" },
+  { value: "email", label: "Email" },
+  { value: "code", label: "Code" },
+  { value: "notes", label: "Notes" },
+  { value: "off", label: "No cleanup" },
+];
+
+export const MAX_APP_RULES = 30;
+export const MAX_TRANSFORMS = 12;
+
+export const CLEANUP_LEVELS: { value: CleanupLevel; label: string; hint: string }[] = [
+  { value: "light", label: "Light", hint: "Takes out “um” and false starts. Nothing else is touched." },
+  { value: "standard", label: "Standard", hint: "Fillers, punctuation and obvious slips. Your words stay yours." },
+  { value: "polished", label: "Polished", hint: "Also tidies grammar and joins fragments into proper sentences." },
+];
 
 export const MAX_DICTIONARY_TERMS = 40;
 export const MAX_SNIPPETS = 50;
@@ -46,6 +101,9 @@ export type ModelStatus = {
   punctuation: ModelState;
   punctuationProgress: number | null;
   enhance: EnhanceStatus;
+  whisper: ModelState;
+  whisperProgress: number | null;
+  whisperMessage: string | null;
 };
 
 export type Permissions = {
@@ -64,6 +122,10 @@ export type Entry = {
   transcribeMs?: number;
   enhanceMs?: number;
   latencyMs?: number;
+  /** Name of the app this was dictated into, for the stats on Home. */
+  app?: string;
+  /** Style used there, such as "email". */
+  style?: string;
 };
 
 export type DictationEvent =
@@ -73,6 +135,8 @@ export type DictationEvent =
   | { phase: "copied"; text: string }
   | { phase: "empty" }
   | { phase: "cancelled" }
+  | { phase: "undone" }
+  | { phase: "blocked"; reason: string }
   | { phase: "error"; message: string };
 
 /** macOS virtual keycodes, which is what the key watcher polls. */
@@ -170,7 +234,22 @@ export const LANGUAGE_NAMES: Record<string, string> = {
   sv: "Swedish", uk: "Ukrainian",
 };
 
-export const languageName = (code?: string) => (code ? LANGUAGE_NAMES[code] ?? code.toUpperCase() : null);
+/** Languages Whisper can be locked to, most asked-for first. It detects the rest itself. */
+export const WHISPER_LANGUAGES = [
+  "en", "pt", "es", "fr", "de", "it", "nl", "pl", "ru", "uk", "tr", "ar", "he", "hi", "zh", "ja",
+  "ko", "vi", "th", "id", "ms", "fil", "sv", "da", "no", "fi", "el", "cs", "ro", "hu",
+];
+
+const displayNames = (() => {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" });
+  } catch {
+    return null;
+  }
+})();
+
+export const languageName = (code?: string | null) =>
+  code ? LANGUAGE_NAMES[code] ?? displayNames?.of(code) ?? code.toUpperCase() : null;
 
 export const api = {
   modelStatus: () => invoke<ModelStatus>("model_status"),
@@ -195,4 +274,11 @@ export const api = {
   },
   launchAtLogin: () => invoke<boolean>("launch_at_login"),
   setLaunchAtLogin: (enabled: boolean) => invoke<void>("set_launch_at_login", { enabled }),
+  suggestions: () => invoke<Suggestion[]>("suggestions_list"),
+  resolveSuggestion: (word: string, accepted: boolean) =>
+    invoke<void>("suggestion_resolve", { word, accepted }),
+  checkForUpdate: () => invoke<UpdateInfo>("check_for_update"),
+  openRelease: (url: string) => invoke<void>("open_release", { url }),
+  /** Downloads, checks and installs the update, then Parla quits and reopens. */
+  installUpdate: (url: string) => invoke<void>("install_update", { url }),
 };

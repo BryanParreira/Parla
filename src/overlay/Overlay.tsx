@@ -46,6 +46,12 @@ export default function Overlay() {
         case "empty":
           flash("Didn't catch that", "muted", 1400);
           break;
+        case "undone":
+          flash("Took that back", "muted", 1400);
+          break;
+        case "blocked":
+          flash(`Not here — ${payload.reason}`, "muted", 2600);
+          break;
         case "error":
           flash(payload.message, "error", 3500);
           break;

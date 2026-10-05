@@ -10,8 +10,13 @@ import {
   HOTKEY_PRESETS,
   keyLabel,
   sameHotkey,
+  APP_STYLES,
+  type AppRule,
+  type AppStyle,
   type Hotkey,
   type Snippet,
+  type Suggestion,
+  type Transform,
 } from "../lib/api";
 import { cx } from "../lib/utils";
 
@@ -103,6 +108,44 @@ export function Toggle({
         className={cx("size-5 rounded-full shadow", checked ? "bg-bg" : "bg-muted")}
       />
     </button>
+  );
+}
+
+/** A row of choices where exactly one is picked, for settings a toggle can't express. */
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (next: T) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={cx("flex shrink-0 gap-0.5 rounded-lg bg-raised/60 p-0.5", disabled && "opacity-40")}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          disabled={disabled}
+          onClick={() => onChange(option.value)}
+          className={cx(
+            "relative h-7 rounded-md px-2.5 text-[12px] font-medium transition-colors",
+            option.value === value ? "text-fg" : "text-muted hover:text-fg",
+          )}
+        >
+          {option.value === value && (
+            <motion.span
+              layoutId="segmented-active"
+              className="absolute inset-0 rounded-md bg-surface ring-1 ring-white/[0.06]"
+              transition={{ type: "spring", stiffness: 500, damping: 38 }}
+            />
+          )}
+          <span className="relative">{option.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -473,6 +516,229 @@ export function SnippetList({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const FIELD =
+  "selectable rounded-lg border border-line bg-raised/60 px-3 text-[13px] outline-none transition-colors placeholder:text-muted focus:border-accent disabled:opacity-40";
+
+function RemoveButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      title="Remove"
+      onClick={onClick}
+      className="grid size-5 shrink-0 place-items-center rounded text-muted transition-colors hover:text-danger"
+    >
+      <X className="size-3" />
+    </button>
+  );
+}
+
+/** Per-app writing styles. Recent apps from history are offered as you type. */
+export function AppRuleList({
+  rules,
+  onChange,
+  limit,
+  recentApps,
+  disabled,
+}: {
+  rules: AppRule[];
+  onChange: (rules: AppRule[]) => void;
+  limit: number;
+  recentApps: string[];
+  disabled?: boolean;
+}) {
+  const [app, setApp] = useState("");
+  const [style, setStyle] = useState<AppStyle>("casual");
+  const full = rules.length >= limit;
+  const clash = rules.some((kept) => kept.app.toLowerCase() === app.trim().toLowerCase());
+  const ready = app.trim() && !full && !clash && !disabled;
+
+  const add = () => {
+    if (!ready) return;
+    onChange([...rules, { app: app.trim(), style }]);
+    setApp("");
+  };
+
+  return (
+    <div className="px-4 py-3.5">
+      <div className="flex items-center gap-2">
+        <input
+          value={app}
+          list="parla-recent-apps"
+          onChange={(event) => setApp(event.target.value)}
+          onKeyDown={(event) => event.key === "Enter" && add()}
+          placeholder={full ? `That's the ${limit}-app limit` : "App or website (Slack, Mail, mail.google.com…)"}
+          disabled={full || disabled}
+          maxLength={64}
+          className={cx(FIELD, "h-9 flex-1")}
+        />
+        <datalist id="parla-recent-apps">
+          {recentApps.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+        <select
+          value={style}
+          disabled={disabled}
+          onChange={(event) => setStyle(event.target.value as AppStyle)}
+          className="h-9 rounded-lg border border-line bg-raised/60 px-2.5 text-[12px] outline-none focus:border-accent disabled:opacity-40"
+        >
+          {APP_STYLES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <Button variant="secondary" className="h-9 px-3" disabled={!ready} onClick={add} title="Add rule">
+          <Plus className="size-4" />
+        </Button>
+      </div>
+      {clash && app.trim() && <p className="mt-2 text-[12px] text-danger">That app already has a rule.</p>}
+
+      {rules.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {rules.map((rule) => (
+            <div
+              key={rule.app}
+              className="flex items-center gap-3 rounded-lg border border-line bg-raised/60 py-1.5 pl-3 pr-1.5 text-[12.5px]"
+            >
+              <span className="selectable flex-1 truncate font-medium">{rule.app}</span>
+              <select
+                value={rule.style}
+                disabled={disabled}
+                onChange={(event) =>
+                  onChange(
+                    rules.map((kept) =>
+                      kept.app === rule.app ? { ...kept, style: event.target.value as AppStyle } : kept,
+                    ),
+                  )
+                }
+                className="h-7 rounded-md border border-line bg-raised px-2 text-[12px] outline-none disabled:opacity-40"
+              >
+                {APP_STYLES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <RemoveButton onClick={() => onChange(rules.filter((kept) => kept.app !== rule.app))} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Saved instructions for Command Mode and the menu bar. */
+export function TransformList({
+  transforms,
+  onChange,
+  limit,
+  disabled,
+}: {
+  transforms: Transform[];
+  onChange: (transforms: Transform[]) => void;
+  limit: number;
+  disabled?: boolean;
+}) {
+  const [name, setName] = useState("");
+  const [instruction, setInstruction] = useState("");
+  const full = transforms.length >= limit;
+  const clash = transforms.some((kept) => kept.name.toLowerCase() === name.trim().toLowerCase());
+  const ready = name.trim() && instruction.trim() && !full && !clash && !disabled;
+
+  const add = () => {
+    if (!ready) return;
+    onChange([...transforms, { name: name.trim(), instruction: instruction.trim() }]);
+    setName("");
+    setInstruction("");
+  };
+
+  return (
+    <div className="px-4 py-3.5">
+      <div className="flex items-start gap-2">
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder={full ? `That's the ${limit} limit` : "Name (Friendly)"}
+          disabled={full || disabled}
+          maxLength={32}
+          className={cx(FIELD, "h-9 w-40 shrink-0")}
+        />
+        <textarea
+          value={instruction}
+          onChange={(event) => setInstruction(event.target.value)}
+          onKeyDown={(event) => event.key === "Enter" && (event.metaKey || event.ctrlKey) && add()}
+          placeholder="What to do (Rewrite this so it sounds warm and friendly.)"
+          disabled={full || disabled}
+          rows={1}
+          maxLength={300}
+          className={cx(FIELD, "min-h-9 flex-1 resize-y py-2 leading-snug")}
+        />
+        <Button variant="secondary" className="h-9 px-3" disabled={!ready} onClick={add} title="Add transform (⌘↩)">
+          <Plus className="size-4" />
+        </Button>
+      </div>
+      {clash && name.trim() && <p className="mt-2 text-[12px] text-danger">You already have one with that name.</p>}
+
+      {transforms.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {transforms.map((transform) => (
+            <div
+              key={transform.name}
+              className="flex items-start gap-3 rounded-lg border border-line bg-raised/60 py-2 pl-3 pr-1.5 text-[12.5px]"
+            >
+              <span className="selectable w-36 shrink-0 truncate font-medium">{transform.name}</span>
+              <span className="selectable line-clamp-2 flex-1 text-muted">{transform.instruction}</span>
+              <RemoveButton onClick={() => onChange(transforms.filter((kept) => kept.name !== transform.name))} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Words the user keeps fixing after a paste, each one click from the dictionary. */
+export function SuggestionList({
+  suggestions,
+  onAccept,
+  onDismiss,
+  disabled,
+}: {
+  suggestions: Suggestion[];
+  onAccept: (word: string) => void;
+  onDismiss: (word: string) => void;
+  disabled?: boolean;
+}) {
+  if (suggestions.length === 0) return null;
+  return (
+    <div className="px-4 py-3.5">
+      <p className="text-[11.5px] font-medium uppercase tracking-wide text-muted">You keep fixing these</p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {suggestions.map((suggestion) => (
+          <span
+            key={suggestion.word}
+            title={`Parla typed “${suggestion.heard}” and you changed it${suggestion.count > 1 ? ` ${suggestion.count} times` : ""}.`}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-raised/60 py-1 pl-2.5 pr-1 text-[12px]"
+          >
+            <span className="selectable font-medium">{suggestion.word}</span>
+            <span className="text-muted line-through decoration-white/25">{suggestion.heard}</span>
+            <button
+              title="Add to your words"
+              disabled={disabled}
+              onClick={() => onAccept(suggestion.word)}
+              className="grid size-5 place-items-center rounded text-muted transition-colors hover:text-ok disabled:opacity-40"
+            >
+              <Check className="size-3" />
+            </button>
+            <RemoveButton onClick={() => onDismiss(suggestion.word)} />
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

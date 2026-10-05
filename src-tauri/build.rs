@@ -1,54 +1,44 @@
-use std::{env, fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
+use std::{env, path::PathBuf, process::Command};
 
-// speech-swift 0.0.9 treats every token id below 274 as a control token, but ids
-// 234–243 are the digits 0–9 in the Parakeet TDT v3 vocabulary, so numbers were
-// silently dropped from transcripts.
-const DIGIT_FILTER_ORIGINAL: &str = "if tokenId >= firstTextTokenId {";
-const DIGIT_FILTER_PATCHED: &str =
-    "if tokenId >= firstTextTokenId || (234...243).contains(tokenId) {";
+// swift-rs' own bridge functions, which the Rust side of swift-rs calls.
+const SWIFT_RS_EXPORTS: [&str; 4] =
+    ["_retain_object", "_release_object", "_string_from_bytes", "_data_from_bytes"];
 
-fn patch_speech_swift() {
+/// Xcode 27 builds @_cdecl functions as local symbols in release archives. swift-rs
+/// 1.0.8 promotes Parla's own ones back to global but not its bridge helpers, so the
+/// app fails to link with "Undefined symbols: _retain_object". Promote those too.
+fn globalize_swift_rs_exports() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let scratch = out_dir.join("swift-rs").join("parla-swift");
-
-    let status = Command::new("swift")
-        .args(["package", "--package-path", "swift-lib", "--scratch-path"])
-        .arg(&scratch)
-        .arg("resolve")
-        .status()
-        .expect("failed to run swift package resolve");
-    assert!(status.success(), "resolving Swift dependencies failed");
-
-    let decoder = scratch.join("checkouts/speech-swift/Sources/ParakeetASR/TDTGreedyDecoder.swift");
-    let source = fs::read_to_string(&decoder)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", decoder.display()));
-    if source.contains(DIGIT_FILTER_PATCHED) {
+    let profile = if env::var("PROFILE").as_deref() == Ok("release") { "release" } else { "debug" };
+    let archive = out_dir.join("swift-rs/parla-swift").join(profile).join("libparla-swift.a");
+    if !archive.exists() {
         return;
     }
-    assert_eq!(
-        source.matches(DIGIT_FILTER_ORIGINAL).count(),
-        1,
-        "speech-swift's decoder changed; revisit the digit token patch in build.rs"
-    );
-
-    let mut permissions = fs::metadata(&decoder)
-        .expect("failed to read decoder permissions")
-        .permissions();
-    permissions.set_mode(permissions.mode() | 0o200);
-    fs::set_permissions(&decoder, permissions).expect("failed to make decoder writable");
-    fs::write(
-        &decoder,
-        source.replacen(DIGIT_FILTER_ORIGINAL, DIGIT_FILTER_PATCHED, 1),
-    )
-    .expect("failed to patch speech-swift decoder");
+    let sysroot = Command::new(env::var("RUSTC").unwrap_or_else(|_| "rustc".into()))
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    let host = env::var("HOST").unwrap_or_default();
+    let objcopy = sysroot
+        .map(|root| PathBuf::from(root).join("lib/rustlib").join(host).join("bin/llvm-objcopy"))
+        .filter(|path| path.exists());
+    let Some(objcopy) = objcopy else {
+        println!("cargo:warning=llvm-objcopy not found; run `rustup component add llvm-tools`");
+        return;
+    };
+    let status = Command::new(objcopy)
+        .args(SWIFT_RS_EXPORTS.map(|symbol| format!("--globalize-symbol={symbol}")))
+        .arg(&archive)
+        .status();
+    assert!(status.is_ok_and(|s| s.success()), "failed to globalize swift-rs exports");
 }
 
 fn main() {
-    patch_speech_swift();
-
     swift_rs::SwiftLinker::new("15.0")
         .with_package("parla-swift", "./swift-lib/")
         .link();
+    globalize_swift_rs_exports();
 
     // speech-swift is built against the OS Swift runtime rather than bundling one.
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");

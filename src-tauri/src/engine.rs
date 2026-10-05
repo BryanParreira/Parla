@@ -3,10 +3,20 @@ use swift_rs::{swift, Bool, Int, SRString};
 
 swift!(fn parla_model_status() -> SRString);
 swift!(fn parla_prepare_model() -> Bool);
-swift!(fn parla_start(enhance: Bool, quick: Bool, terms: &SRString, match_app: Bool, live: Bool, device: &SRString) -> SRString);
+swift!(fn parla_start(live: Bool, device: &SRString, whisper: Bool, language: &SRString, soft_voice: Bool) -> SRString);
+swift!(fn parla_start_context(enhance: Bool, quick: Bool, terms: &SRString, match_app: Bool, level: &SRString, rules: &SRString, use_context: Bool, formatting: Bool) -> Bool);
+swift!(fn parla_prepare_whisper() -> Bool);
+swift!(fn parla_warm_microphone(device: &SRString) -> Bool);
+swift!(fn parla_focused_text() -> SRString);
+swift!(fn parla_latest_release() -> SRString);
+swift!(fn parla_download(url: &SRString, destination: &SRString) -> SRString);
+swift!(fn parla_download_progress() -> f64);
 swift!(fn parla_input_devices() -> SRString);
+swift!(fn parla_frontmost_app() -> SRString);
+swift!(fn parla_sensitive_context() -> SRString);
 swift!(fn parla_partial() -> SRString);
 swift!(fn parla_selected_text() -> SRString);
+swift!(fn parla_pick(names: &SRString) -> Int);
 swift!(fn parla_run_command(instruction: &SRString, passage: &SRString) -> SRString);
 swift!(fn parla_stop() -> SRString);
 swift!(fn parla_cancel() -> Bool);
@@ -15,7 +25,7 @@ swift!(fn parla_mic_permission() -> Int);
 swift!(fn parla_request_mic() -> Bool);
 swift!(fn parla_request_accessibility() -> Bool);
 swift!(fn parla_play_cue(start: Bool) -> Bool);
-swift!(fn parla_duck_audio(enable: Bool) -> Bool);
+swift!(fn parla_duck_audio(enable: Bool, mute: Bool, pause: Bool) -> Bool);
 swift!(fn parla_float_overlay(window: Int) -> Bool);
 
 #[derive(Serialize, Deserialize)]
@@ -32,6 +42,12 @@ pub struct ModelStatus {
     pub punctuation_progress: Option<f64>,
     #[serde(default)]
     pub enhance: String,
+    #[serde(default)]
+    pub whisper: String,
+    #[serde(default)]
+    pub whisper_progress: Option<f64>,
+    #[serde(default)]
+    pub whisper_message: Option<String>,
 }
 
 impl ModelStatus {
@@ -44,6 +60,9 @@ impl ModelStatus {
             punctuation: "error".into(),
             punctuation_progress: None,
             enhance: "unavailable".into(),
+            whisper: "idle".into(),
+            whisper_progress: None,
+            whisper_message: None,
         }
     }
 }
@@ -58,6 +77,15 @@ pub struct Transcript {
     pub enhance_ms: Option<u64>,
     #[cfg_attr(not(test), allow(dead_code))]
     pub audio_ms: Option<u64>,
+    /// The text lands straight after a word, so a space goes in front of it.
+    #[serde(default)]
+    pub leading_space: Option<bool>,
+    /// The text lands straight before a word, so a space goes after it.
+    #[serde(default)]
+    pub trailing_space: Option<bool>,
+    /// The style used for the app or site, such as "email".
+    #[serde(default)]
+    pub style: Option<String>,
     error: Option<String>,
 }
 
@@ -70,24 +98,120 @@ pub fn prepare() {
     let _ = unsafe { parla_prepare_model() };
 }
 
-// Dictionary terms cross as one newline-separated string rather than a shared array,
-// which keeps the bridge to the single string type swift-rs already passes.
-// An empty device UID records from the system default input.
-pub fn start(
-    enhance: bool,
-    quick: bool,
-    dictionary: &[String],
-    match_app: bool,
-    live: bool,
-    device: Option<&str>,
-) -> Result<(), String> {
-    let terms = SRString::from(dictionary.join("\n").as_str());
-    let device = SRString::from(device.unwrap_or(""));
-    let error = unsafe { parla_start(enhance, quick, &terms, match_app, live, &device) };
+/// How a dictation should be handled, fixed when recording starts.
+pub struct StartOptions<'a> {
+    pub enhance: bool,
+    pub quick: bool,
+    pub dictionary: &'a [String],
+    pub match_app: bool,
+    /// The user's app rules, one "app\tstyle" per line.
+    pub rules: String,
+    pub live: bool,
+    pub device: Option<&'a str>,
+    pub level: &'a str,
+    pub use_context: bool,
+    pub formatting: bool,
+    pub whisper: bool,
+    /// A language code to force, or empty to detect it.
+    pub language: &'a str,
+    /// Boosts the microphone for dictating in a whisper.
+    pub soft_voice: bool,
+}
+
+// Lists cross as one newline-separated string rather than a shared array, which keeps
+// the bridge to the single string type swift-rs already passes. An empty device UID
+// records from the system default input.
+pub fn start(options: &StartOptions) -> Result<(), String> {
+    let device = SRString::from(options.device.unwrap_or(""));
+    let language = SRString::from(options.language);
+    let error = unsafe {
+        parla_start(options.live, &device, options.whisper, &language, options.soft_voice)
+    };
     match error.as_str() {
         "" => Ok(()),
         message => Err(message.to_string()),
     }
+}
+
+/// Reads the app and cursor context for the cleanup. Called once recording has started,
+/// so the first words are never lost to it.
+pub fn start_context(options: &StartOptions) {
+    let terms = SRString::from(options.dictionary.join("\n").as_str());
+    let level = SRString::from(options.level);
+    let rules = SRString::from(options.rules.as_str());
+    let _ = unsafe {
+        parla_start_context(
+            options.enhance,
+            options.quick,
+            &terms,
+            options.match_app,
+            &level,
+            &rules,
+            options.use_context,
+            options.formatting,
+        )
+    };
+}
+
+/// Sets up the audio engine ahead of time so pressing the key records right away. The
+/// microphone itself stays off until then.
+pub fn warm_microphone(device: Option<&str>) {
+    let _ = unsafe { parla_warm_microphone(&SRString::from(device.unwrap_or(""))) };
+}
+
+pub fn prepare_whisper() {
+    let _ = unsafe { parla_prepare_whisper() };
+}
+
+/// The focused field's text, or empty when it is a password field or unreadable.
+pub fn focused_text() -> String {
+    unsafe { parla_focused_text() }.as_str().to_string()
+}
+
+#[derive(Deserialize)]
+pub struct Release {
+    pub version: String,
+    pub url: String,
+    pub download: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Downloads `url` to `destination`, blocking until it is done.
+pub fn download(url: &str, destination: &std::path::Path) -> Result<(), String> {
+    let url = SRString::from(url);
+    let destination = SRString::from(destination.to_string_lossy().as_ref());
+    match unsafe { parla_download(&url, &destination) }.as_str() {
+        "" => Ok(()),
+        message => Err(message.to_string()),
+    }
+}
+
+/// How far the download in progress has got, from 0 to 1.
+pub fn download_progress() -> f64 {
+    unsafe { parla_download_progress() }
+}
+
+pub fn latest_release() -> Result<Release, String> {
+    let raw = unsafe { parla_latest_release() };
+    let release: Release = serde_json::from_str(raw.as_str()).map_err(|e| e.to_string())?;
+    match release.error.clone() {
+        Some(error) => Err(error),
+        None => Ok(release),
+    }
+}
+
+/// The name of the app in front, for the history entry. Only the app's own name, never
+/// its window or contents.
+pub fn frontmost_app() -> Option<String> {
+    let name = unsafe { parla_frontmost_app() }.as_str().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Why dictating right now would be a bad idea: a password field has focus, or the app
+/// in front is one where a stray paste does real damage. Empty means go ahead.
+pub fn sensitive_context() -> Option<String> {
+    let reason = unsafe { parla_sensitive_context() }.as_str().to_string();
+    (!reason.is_empty()).then_some(reason)
 }
 
 pub fn stop() -> Result<Transcript, String> {
@@ -125,6 +249,16 @@ pub fn selected_text() -> String {
 struct CommandResult {
     text: String,
     error: Option<String>,
+}
+
+/// Shows `names` as a menu at the selected text and returns the index picked, or None
+/// when the menu was dismissed.
+pub fn pick(names: &[&str]) -> Option<usize> {
+    if names.is_empty() {
+        return None;
+    }
+    let joined = SRString::from(names.join("\n").as_str());
+    usize::try_from(unsafe { parla_pick(&joined) }).ok()
 }
 
 pub fn run_command(instruction: &str, passage: &str) -> Result<String, String> {
@@ -169,7 +303,13 @@ pub fn play_cue(start: bool) {
 // Silences whatever else is playing so it neither bleeds into the microphone nor
 // talks over the user. Turning it off restores the exact level it replaced.
 pub fn duck_audio(enable: bool) {
-    let _ = unsafe { parla_duck_audio(enable) };
+    let _ = unsafe { parla_duck_audio(enable, false, false) };
+}
+
+/// Mutes the speakers and/or pauses whatever music or video is playing, until
+/// `duck_audio(false)` puts it all back.
+pub fn quiet_other_audio(mute: bool, pause: bool) {
+    let _ = unsafe { parla_duck_audio(true, mute, pause) };
 }
 
 // Keeps the overlay above every app, full-screen ones included. Must run on the main

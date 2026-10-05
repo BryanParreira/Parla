@@ -10,7 +10,7 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/Brendonovich/swift-rs", exact: "1.0.7"),
-    .package(url: "https://github.com/soniqo/speech-swift", exact: "0.0.9"),
+    .package(url: "https://github.com/soniqo/speech-swift", exact: "0.0.28"),
   ],
   targets: [
     .target(
@@ -19,6 +19,7 @@ let package = Package(
         .product(name: "AudioCommon", package: "speech-swift"),
         .product(name: "ParakeetASR", package: "speech-swift"),
         .product(name: "ParakeetStreamingASR", package: "speech-swift"),
+        .product(name: "WhisperASR", package: "speech-swift"),
         .product(name: "SwiftRs", package: "swift-rs"),
       ],
       path: "src"
