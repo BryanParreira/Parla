@@ -34,6 +34,11 @@ pub struct ModelStatus {
     pub whisper_progress: Option<f64>,
     #[serde(default)]
     pub whisper_message: Option<String>,
+    /// The local Enhance model's download on Windows and Linux.
+    #[serde(default)]
+    pub enhance_progress: Option<f64>,
+    #[serde(default)]
+    pub enhance_message: Option<String>,
 }
 
 impl ModelStatus {
@@ -49,6 +54,8 @@ impl ModelStatus {
             whisper: "idle".into(),
             whisper_progress: None,
             whisper_message: None,
+            enhance_progress: None,
+            enhance_message: None,
         }
     }
 }

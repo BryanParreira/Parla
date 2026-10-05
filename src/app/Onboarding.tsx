@@ -1,7 +1,7 @@
 import { ArrowRight, Check, Command, Cpu, Keyboard, Mic, ShieldCheck, Sparkles } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState, type ReactNode } from "react";
-import { api, type Hotkey, type ModelStatus, type Permissions } from "../lib/api";
+import { api, type Hotkey, type ModelStatus, type Permissions, IS_MAC, PLATFORM, THIS_DEVICE } from "../lib/api";
 import { useDictation } from "../lib/hooks";
 import { cx } from "../lib/utils";
 import { Button, HotkeyPicker, Keys, Logo } from "./ui";
@@ -53,7 +53,7 @@ export default function Onboarding({
               <Step
                 icon={<Logo size={56} />}
                 title="Talk, don't type."
-                body="Parla turns your voice into text in any app, instantly. Everything runs on this Mac — your words never leave it."
+                body={`Parla turns your voice into text in any app, instantly. Everything runs on ${THIS_DEVICE} — your words never leave it.`}
               >
                 <Button className="h-10 w-full" onClick={next}>
                   Get started <ArrowRight className="size-4" />
@@ -77,7 +77,7 @@ export default function Onboarding({
                       microphone === "denied" ? api.openPrivacySettings("microphone") : api.requestMicrophone()
                     }
                   >
-                    {microphone === "denied" ? "Open System Settings" : "Allow microphone"}
+                    {microphone === "denied" ? (IS_MAC ? "Open System Settings" : "Open privacy settings") : "Allow microphone"}
                   </Button>
                 )}
                 <Button className="h-10 w-full" disabled={microphone !== "granted"} onClick={next}>
@@ -86,7 +86,23 @@ export default function Onboarding({
               </Step>
             )}
 
-            {step === 2 && (
+            {step === 2 && !IS_MAC && (
+              <Step
+                icon={<IconBadge><Keyboard className="size-6" /></IconBadge>}
+                title="Parla types for you"
+                body={
+                  PLATFORM === "linux"
+                    ? "Parla types your words into whatever app you're using. On Linux that needs an X11 session; under Wayland your dictations are copied, ready to paste."
+                    : "Parla types your words into whatever app you're using. Nothing to switch on."
+                }
+              >
+                <Button className="h-10 w-full" onClick={next}>
+                  Continue
+                </Button>
+              </Step>
+            )}
+
+            {step === 2 && IS_MAC && (
               <Step
                 icon={<IconBadge><Keyboard className="size-6" /></IconBadge>}
                 title="Let Parla type for you"
@@ -109,7 +125,7 @@ export default function Onboarding({
               <Step
                 icon={<IconBadge><Cpu className="size-6" /></IconBadge>}
                 title="Setting up the speech model"
-                body="A one-time download of a compact speech model that runs on your Mac's Neural Engine. After this, Parla works fully offline."
+                body={IS_MAC ? "A one-time download of a compact speech model that runs on your Mac's Neural Engine. After this, Parla works fully offline." : "A one-time download of the speech model (about 670 MB) and the Enhance model (about 1.1 GB). After this, Parla works fully offline."}
               >
                 <div className="rounded-xl border border-line bg-surface p-4">
                   {model?.state === "ready" ? (

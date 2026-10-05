@@ -17,6 +17,7 @@ import {
   type Snippet,
   type Suggestion,
   type Transform,
+  MOD_KEY,
 } from "../lib/api";
 import { cx } from "../lib/utils";
 
@@ -490,7 +491,7 @@ export function SnippetList({
           maxLength={2000}
           className={cx(field, "min-h-9 flex-1 resize-y py-2 leading-snug")}
         />
-        <Button variant="secondary" className="h-9 px-3" disabled={!ready} onClick={add} title="Add snippet (⌘↩)">
+        <Button variant="secondary" className="h-9 px-3" disabled={!ready} onClick={add} title={`Add snippet (${MOD_KEY}↩)`}>
           <Plus className="size-4" />
         </Button>
       </div>
@@ -678,7 +679,7 @@ export function TransformList({
           maxLength={300}
           className={cx(FIELD, "min-h-9 flex-1 resize-y py-2 leading-snug")}
         />
-        <Button variant="secondary" className="h-9 px-3" disabled={!ready} onClick={add} title="Add transform (⌘↩)">
+        <Button variant="secondary" className="h-9 px-3" disabled={!ready} onClick={add} title={`Add transform (${MOD_KEY}↩)`}>
           <Plus className="size-4" />
         </Button>
       </div>

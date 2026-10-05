@@ -1,7 +1,7 @@
 import { Download, Search, Trash2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState } from "react";
-import { api, languageName, type Entry } from "../lib/api";
+import { api, languageName, type Entry, THIS_DEVICE } from "../lib/api";
 import { dayLabel, entryWpm, formatLatency, formatTime } from "../lib/utils";
 import { Button, Card, CopyButton, PageHeader } from "./ui";
 
@@ -58,7 +58,7 @@ export default function HistoryPage({ entries }: { entries: Entry[] }) {
     <div>
       <PageHeader
         title="History"
-        subtitle="Everything you've dictated, stored only on this Mac."
+        subtitle={`Everything you've dictated, stored only on ${THIS_DEVICE}.`}
         action={
           entries.length > 0 && (
             <div className="flex gap-1.5">

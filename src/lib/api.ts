@@ -104,6 +104,9 @@ export type ModelStatus = {
   whisper: ModelState;
   whisperProgress: number | null;
   whisperMessage: string | null;
+  /** Windows and Linux: the local Enhance model's download, which the Mac doesn't have. */
+  enhanceProgress?: number | null;
+  enhanceMessage?: string | null;
 };
 
 export type Permissions = {
@@ -146,6 +149,13 @@ export const PLATFORM: "mac" | "windows" | "linux" = (() => {
   if (/Mac/i.test(agent)) return "mac";
   return "linux";
 })();
+
+export const IS_MAC = PLATFORM === "mac";
+/** How the interface names things that differ between platforms. */
+export const THIS_DEVICE = IS_MAC ? "this Mac" : "this computer";
+export const TRAY_NAME = IS_MAC ? "menu bar" : "system tray";
+export const MOD_KEY = IS_MAC ? "⌘" : "Ctrl+";
+export const PASTE_KEYS = IS_MAC ? "⌘V" : "Ctrl+V";
 
 type KeyTable = {
   labels: Record<number, string>;

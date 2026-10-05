@@ -1,2 +1,10 @@
-[env]
-MACOSX_DEPLOYMENT_TARGET = { value = "15.0", force = true }
+# The speech library (sherpa-onnx with ONNX Runtime) is linked statically on Windows
+# and Linux, so Parla ships as one executable with no extra libraries to install.
+
+# Its Windows build uses the static C runtime; Rust has to match it.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# Its Linux build isn't position-independent, which sherpa-rs asks to match like this.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "relocation-model=dynamic-no-pic"]

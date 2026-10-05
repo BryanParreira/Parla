@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import type { DictationEvent } from "../lib/api";
+import { PASTE_KEYS, type DictationEvent } from "../lib/api";
 import { cx } from "../lib/utils";
 import Orb from "./Orb";
 
@@ -41,7 +41,7 @@ export default function Overlay() {
           setView({ kind: "hidden" });
           break;
         case "copied":
-          flash("Copied — press ⌘V to paste", "muted", 2200);
+          flash(`Copied — press ${PASTE_KEYS} to paste`, "muted", 2200);
           break;
         case "empty":
           flash("Didn't catch that", "muted", 1400);

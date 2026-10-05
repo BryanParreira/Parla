@@ -1,7 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { Check } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { api, CLEANUP_LEVELS, LANGUAGE_NAMES, languageName, MAX_APP_RULES, MAX_DICTIONARY_TERMS, MAX_SNIPPETS, MAX_TRANSFORMS, WHISPER_LANGUAGES, type EnhanceStatus, type InputDevice, type Entry, type Hotkey, type ModelState, type ModelStatus, type Permissions, type Settings, type SpeechModel, type UpdateInfo } from "../lib/api";
+import { api, CLEANUP_LEVELS, IS_MAC, THIS_DEVICE, TRAY_NAME, LANGUAGE_NAMES, languageName, MAX_APP_RULES, MAX_DICTIONARY_TERMS, MAX_SNIPPETS, MAX_TRANSFORMS, WHISPER_LANGUAGES, type EnhanceStatus, type InputDevice, type Entry, type Hotkey, type ModelState, type ModelStatus, type Permissions, type Settings, type SpeechModel, type UpdateInfo } from "../lib/api";
 import { useSuggestions, useUpdateInstall } from "../lib/hooks";
 import { AppRuleList, Button, Card, HotkeyField, HotkeyPicker, PageHeader, Segmented, SnippetList, StatusDot, SuggestionList, TermList, Toggle, TransformList } from "./ui";
 
@@ -13,14 +13,25 @@ const SPEECH_MODELS: { value: SpeechModel; label: string }[] = [
 const LANGUAGE_COUNT = Object.keys(LANGUAGE_NAMES).length;
 const LANGUAGE_EXAMPLES = ["en", "es", "pt", "fr", "de", "it"].map((code) => LANGUAGE_NAMES[code]).join(", ");
 
-const ENHANCE_HINTS: Record<EnhanceStatus, string> = {
+const ENHANCE_HINTS: Record<EnhanceStatus, string> = IS_MAC ? {
   available: "Removes filler words, fixes grammar and keeps only your corrections. Runs on-device with Apple Intelligence.",
   appleIntelligenceNotEnabled: "Turn on Apple Intelligence in System Settings to use Enhance.",
   modelNotReady: "Apple Intelligence is still downloading its model. Enhance turns on once it's ready.",
   deviceNotEligible: "This Mac doesn't support Apple Intelligence, so text is typed with punctuation only.",
   unsupportedOS: "Enhance needs macOS 26 or later. Text is still typed with punctuation.",
   unavailable: "Apple Intelligence isn't available right now. Text is still typed with punctuation.",
+} : {
+  available: "Removes filler words, fixes grammar and keeps only your corrections. Runs on this computer with a small local model.",
+  appleIntelligenceNotEnabled: "",
+  modelNotReady: "Downloading the Enhance model (about 1.1 GB, once). Until then text is typed with punctuation only.",
+  deviceNotEligible: "",
+  unsupportedOS: "",
+  unavailable: "The Enhance model couldn't load. Text is still typed with punctuation.",
 };
+
+const NEEDS_ENHANCE = IS_MAC
+  ? "Needs Apple Intelligence, which isn't available on this Mac."
+  : "Needs the Enhance model, which is still getting ready.";
 
 export default function SettingsPage({
   settings,
@@ -139,7 +150,7 @@ export default function SettingsPage({
           description={
             enhanceAvailable
               ? "Select text, hold this key and say what to change — “make it shorter”, “turn this into a list”."
-              : "Needs Apple Intelligence, which isn't available on this Mac."
+              : NEEDS_ENHANCE
           }
         >
           <HotkeyField
@@ -158,7 +169,7 @@ export default function SettingsPage({
             onChange={(undoHotkey) => save({ undoHotkey })}
           />
         </Row>
-        <Row
+        {IS_MAC && <Row
           label="Transform menu"
           description="Select some text and press this to get your transforms — Fix grammar, Shorter, Formal — right where you're typing. Pick one with its number, the arrow keys or a click; Esc closes it."
         >
@@ -167,12 +178,12 @@ export default function SettingsPage({
             emptyLabel="Not set"
             onChange={(transformHotkey) => save({ transformHotkey })}
           />
-        </Row>
+        </Row>}
         {shortcutError && <p className="px-4 pb-4 text-[12px] text-danger">{shortcutError}</p>}
       </Section>
 
       <Section title="General">
-        <Row label="Microphone" description="Which input Parla listens to. System default follows whatever macOS is using.">
+        <Row label="Microphone" description={`Which input Parla listens to. System default follows whatever ${IS_MAC ? "macOS" : "your system"} is using.`}>
           <select
             value={settings.inputDevice ?? ""}
             onFocus={loadDevices}
@@ -188,13 +199,15 @@ export default function SettingsPage({
             {missingDevice && <option value={settings.inputDevice!}>Unplugged microphone</option>}
           </select>
         </Row>
-        <Row
-          label="Whisper mode"
-          description="Boosts the microphone so you can dictate softly in a shared space or a quiet room. Leave off when speaking normally."
-        >
-          <Toggle checked={settings.softVoice} onChange={(softVoice) => update({ softVoice })} />
-        </Row>
-        <Row label="Open at login" description="Start Parla quietly in the menu bar when you log in.">
+        {IS_MAC && (
+          <Row
+            label="Whisper mode"
+            description="Boosts the microphone so you can dictate softly in a shared space or a quiet room. Leave off when speaking normally."
+          >
+            <Toggle checked={settings.softVoice} onChange={(softVoice) => update({ softVoice })} />
+          </Row>
+        )}
+        <Row label="Open at login" description={`Start Parla quietly in the ${TRAY_NAME} when you log in.`}>
           <Toggle
             checked={launchAtLogin}
             onChange={(enabled) =>
@@ -234,9 +247,11 @@ export default function SettingsPage({
             }
           />
         </Row>
-        <Row label="Accessibility" description="Lets Parla paste text into the app you're using.">
-          <PermissionControl granted={!!permissions?.accessibility} onFix={api.grantAccessibility} />
-        </Row>
+        {IS_MAC && (
+          <Row label="Accessibility" description="Lets Parla paste text into the app you're using.">
+            <PermissionControl granted={!!permissions?.accessibility} onFix={api.grantAccessibility} />
+          </Row>
+        )}
         <Row
           label="Never in password fields"
           description="Refuses to record while a password field has focus, or while a password manager or banking app is in front, so a stray hold can't type into one."
@@ -261,7 +276,7 @@ export default function SettingsPage({
           description={
             enhanceAvailable
               ? CLEANUP_LEVELS.find((level) => level.value === settings.cleanupLevel)?.hint ?? ""
-              : "Needs Enhance, which isn't available on this Mac."
+              : `Needs Enhance, which isn't available on ${THIS_DEVICE} yet.`
           }
         >
           <Segmented
@@ -316,7 +331,7 @@ export default function SettingsPage({
           description={
             enhanceAvailable
               ? "Names, jargon and product spellings Parla keeps getting wrong. Enhance spells these your way."
-              : "Needs Enhance, which isn't available on this Mac."
+              : `Needs Enhance, which isn't available on ${THIS_DEVICE} yet.`
           }
         >
           <span className="text-[12px] tabular-nums text-muted">
@@ -369,8 +384,8 @@ export default function SettingsPage({
         title="Transforms"
         description={
           enhanceAvailable
-            ? "Saved rewrites for selected text. Say the name while holding the Command Mode key, or pick one from Parla's menu bar icon."
-            : "Needs Apple Intelligence, which isn't available on this Mac."
+            ? `Saved rewrites for selected text. Say the name while holding the Command Mode key, or pick one from Parla's ${TRAY_NAME} icon.`
+            : NEEDS_ENHANCE
         }
       >
         <TransformList
@@ -381,7 +396,10 @@ export default function SettingsPage({
         />
       </Section>
 
-      <Section title="Speech models" description="Everything runs on this Mac's Neural Engine. Audio never leaves it.">
+      <Section
+        title="Speech models"
+        description={IS_MAC ? "Everything runs on this Mac's Neural Engine. Audio never leaves it." : "Everything runs on this computer. Audio never leaves it."}
+      >
         <Row
           label="Transcription"
           description={
@@ -390,9 +408,9 @@ export default function SettingsPage({
               : `Parakeet is the fastest, for ${LANGUAGE_COUNT} European languages. Switch to Whisper for Chinese, Japanese, Arabic, Hindi and more.`
           }
         >
-          <Segmented options={SPEECH_MODELS} value={settings.speechModel} onChange={(speechModel) => update({ speechModel })} />
+          {IS_MAC && <Segmented options={SPEECH_MODELS} value={settings.speechModel} onChange={(speechModel) => update({ speechModel })} />}
         </Row>
-        {settings.speechModel === "whisper" && (
+        {IS_MAC && settings.speechModel === "whisper" && (
           <>
             <Row
               label="Whisper large-v3 turbo"

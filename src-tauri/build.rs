@@ -51,6 +51,11 @@ fn main() {
             "Windows and Linux builds need `--features desktop-engine`"
         );
         println!("cargo:rustc-cfg=desktop_engine");
+        // ONNX Runtime's event tracing and espeak's registry lookups live in advapi32,
+        // which the static speech library expects the app to link.
+        if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+            println!("cargo:rustc-link-lib=advapi32");
+        }
     } else {
         link_swift();
     }
