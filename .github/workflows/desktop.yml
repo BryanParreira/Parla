@@ -64,8 +64,9 @@ jobs:
         working-directory: src-tauri
         run: cargo test --features desktop-engine --lib
 
+      # Tauri's own CLI, not the package.json script, which sets a macOS-only SDKROOT.
       - name: Build installers
-        run: pnpm tauri build --features desktop-engine
+        run: pnpm exec tauri build --features desktop-engine
 
       - uses: actions/upload-artifact@v4
         with:
