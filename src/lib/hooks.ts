@@ -45,7 +45,11 @@ export function useDictation(onEvent?: (event: DictationEvent) => void) {
           setPhase("recording");
           break;
         case "processing":
+        case "working":
           setPhase("processing");
+          break;
+        // A passing note, like a mode switch, says nothing about a dictation.
+        case "notice":
           break;
         case "error":
           setError(payload.message);

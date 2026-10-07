@@ -82,6 +82,15 @@ pub struct Transcript {
     /// The style used for the app or site, such as "email".
     #[serde(default)]
     pub style: Option<String>,
+    /// The mode that handled it, by id.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// What the cleanup model was asked, when a mode added instructions or context.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// The kinds of context that went with it: "selection", "clipboard", "app".
+    #[serde(default)]
+    pub context: Option<Vec<String>>,
     #[cfg_attr(desktop_engine, allow(dead_code))]
     pub(super) error: Option<String>,
 }
@@ -107,6 +116,39 @@ pub struct StartOptions<'a> {
     pub language: &'a str,
     /// Boosts the microphone for dictating in a whisper.
     pub soft_voice: bool,
+    /// Cuts long silences out before transcribing.
+    pub trim: bool,
+    /// Turns the microphone's input volume up while recording.
+    pub boost: bool,
+    pub modes: &'a [crate::settings::ModeConfig],
+    /// "match\tmode id" lines that pick a mode by app or website.
+    pub mode_rules: String,
+    pub active_mode: &'a str,
+    /// A mode asked for by its own shortcut, which wins over the app rules.
+    pub forced_mode: Option<&'a str>,
+}
+
+/// The mode a recording ended up in, and the context it collected when it started.
+#[derive(Deserialize, Default, Clone)]
+pub struct ContextReply {
+    pub mode: String,
+    #[serde(default)]
+    pub captured: Vec<String>,
+}
+
+/// A file, a kept recording or a history entry to run through a mode.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(desktop_engine, allow(dead_code))]
+pub struct ProcessRequest<'a> {
+    pub enhance: bool,
+    pub terms: &'a [String],
+    pub level: &'a str,
+    pub formatting: bool,
+    pub mode: &'a crate::settings::ModeConfig,
+    pub whisper: bool,
+    pub language: Option<&'a str>,
+    pub trim: bool,
 }
 
 

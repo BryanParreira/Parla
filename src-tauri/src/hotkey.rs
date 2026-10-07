@@ -1,6 +1,7 @@
 use std::{
+    collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::Sender,
     },
     thread,
@@ -31,6 +32,16 @@ const SILENCE_STOP: Duration = Duration::from_secs(8);
 // Microphone RMS above this counts as the user talking. Room noise usually sits well
 // below it and speech well above.
 const VOICE_LEVEL: f32 = 0.006;
+
+/// Bumped when the worker cancels a recording on its own, such as on Esc, so the
+/// watchers stop treating the keys still held as an ongoing recording.
+static RESETS: AtomicU64 = AtomicU64::new(0);
+
+/// Makes every watcher forget the recording it started. A key still held is then
+/// waited out, so letting go of it can't stop or paste anything.
+pub fn reset() {
+    RESETS.fetch_add(1, Ordering::Relaxed);
+}
 
 /// Set while the settings window is recording a new shortcut. The same poll loop
 /// reports the keys being held instead of starting dictation, so recording needs no
@@ -66,10 +77,11 @@ fn is_held(hotkey: &Hotkey, held: &Held) -> bool {
 }
 
 /// Any other key held alongside the shortcut means the user is typing something like
-/// Option+Arrow, not talking.
-fn is_interfering(hotkey: &Hotkey, held: &Held) -> bool {
+/// Option+Arrow, not talking. Keys in `allowed` have a job of their own during a
+/// recording, like Esc or the mode switch, and don't count.
+fn is_interfering(hotkey: &Hotkey, held: &Held, allowed: &[u16]) -> bool {
     let keys = hotkey.keys();
-    held.keys().any(|key| !keys.contains(&key))
+    held.keys().any(|key| !keys.contains(&key) && !allowed.contains(&key))
 }
 
 #[derive(Clone, Copy)]
@@ -106,6 +118,15 @@ impl Watcher {
         self.last_voice = None;
     }
 
+    /// Forgets a recording the worker already ended, waiting out a key still held.
+    fn abandon(&mut self) {
+        if self.recording() {
+            self.state = Some(State::Blocked);
+            self.last_tap = None;
+            self.last_voice = None;
+        }
+    }
+
     /// True once a hands-free recording has gone quiet for long enough to end it.
     fn gone_silent(&mut self) -> bool {
         let now = Instant::now();
@@ -123,11 +144,15 @@ impl Watcher {
         hotkey: &Hotkey,
         hands_free: bool,
         auto_stop: bool,
+        allowed: &[u16],
         mode: Mode,
+        start: &dyn Fn() -> Command,
         commands: &Sender<Command>,
     ) {
         let held = is_held(hotkey, keys);
-        let blocked = held && is_interfering(hotkey, keys);
+        let blocked = held && is_interfering(hotkey, keys, &[]);
+        // Once recording, Esc and the mode switch are expected alongside the key.
+        let interrupted = held && is_interfering(hotkey, keys, allowed);
         let send = |command| {
             let _ = commands.send(command);
         };
@@ -146,7 +171,7 @@ impl Watcher {
                         .is_some_and(|at| at.elapsed() <= DOUBLE_TAP_WINDOW);
                 self.last_tap = if double { None } else { Some(Instant::now()) };
                 if double {
-                    send(Command::Start(mode));
+                    send(start());
                     // Counting from the start means a latch nobody speaks into ends too.
                     self.last_voice = Some(Instant::now());
                     State::Latched(Instant::now())
@@ -157,7 +182,7 @@ impl Watcher {
             State::Pending(_) if blocked => State::Blocked,
             State::Pending(since) if since.elapsed() >= HOLD_THRESHOLD => {
                 self.last_tap = None;
-                send(Command::Start(mode));
+                send(start());
                 State::Active
             }
             pending @ State::Pending(_) => pending,
@@ -166,7 +191,7 @@ impl Watcher {
                 send(Command::Stop(mode));
                 State::Idle
             }
-            State::Active if blocked => {
+            State::Active if interrupted => {
                 send(Command::Cancel(mode));
                 State::Blocked
             }
@@ -210,11 +235,12 @@ impl TapWatcher {
         &mut self,
         keys: &Held,
         hotkey: &Hotkey,
+        allowed: &[u16],
         commands: &Sender<Command>,
         command: fn() -> Command,
     ) {
         let held = is_held(hotkey, keys);
-        let blocked = held && is_interfering(hotkey, keys);
+        let blocked = held && is_interfering(hotkey, keys, allowed);
 
         self.state = Some(match self.state.unwrap_or(State::Idle) {
             State::Idle if held && blocked => State::Blocked,
@@ -243,7 +269,12 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
         let mut repeat = TapWatcher::default();
         let mut undo = TapWatcher::default();
         let mut transform = TapWatcher::default();
+        let mut cycle = TapWatcher::default();
+        // One watcher per mode with its own shortcut, kept by mode id.
+        let mut modes: HashMap<String, Watcher> = HashMap::new();
         let mut captured: Vec<u16> = Vec::new();
+        let mut escape_down = false;
+        let mut resets = RESETS.load(Ordering::Relaxed);
 
         loop {
             thread::sleep(POLL_INTERVAL);
@@ -258,28 +289,84 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
                 if command.recording() {
                     let _ = commands.send(Command::Cancel(Mode::Command));
                 }
+                if modes.values().any(Watcher::recording) {
+                    let _ = commands.send(Command::Cancel(Mode::Dictate));
+                }
                 dictation.reset();
                 command.reset();
+                modes.clear();
                 repeat = TapWatcher::default();
                 undo = TapWatcher::default();
                 transform = TapWatcher::default();
+                cycle = TapWatcher::default();
                 capture(&app, &keys, &mut captured);
                 continue;
             }
             captured.clear();
 
+            let latest = RESETS.load(Ordering::Relaxed);
+            if latest != resets {
+                resets = latest;
+                dictation.abandon();
+                command.abandon();
+                modes.values_mut().for_each(Watcher::abandon);
+            }
+
             let settings = app.state::<SettingsStore>().get();
+            let esc = settings.esc_cancels;
+            let mut allowed: Vec<u16> = settings.mode_hotkey.as_ref().map(|h| h.keys()).unwrap_or_default();
+            if esc {
+                allowed.push(crate::keys::ESCAPE);
+            }
+            // Esc is reported once per press; the worker knows whether anything is
+            // recording and how long it has run.
+            let escape = keys.contains(crate::keys::ESCAPE);
+            if esc && escape && !escape_down {
+                let _ = commands.send(Command::Escape);
+            }
+            escape_down = escape;
+
+            let dictate = || Command::Start(Mode::Dictate);
             dictation.tick(
                 &keys,
                 &settings.hotkey,
                 settings.hands_free,
                 settings.auto_stop_silence,
+                &allowed,
                 Mode::Dictate,
+                &dictate,
                 &commands,
             );
+            modes.retain(|id, watcher| {
+                settings.mode(id).is_some_and(|mode| mode.hotkey.is_some()) || {
+                    // A shortcut removed mid-recording still has to end that recording.
+                    if watcher.recording() {
+                        let _ = commands.send(Command::Cancel(Mode::Dictate));
+                    }
+                    false
+                }
+            });
+            for mode in &settings.modes {
+                let Some(hotkey) = &mode.hotkey else { continue };
+                let id = mode.id.clone();
+                let start = move || Command::StartMode(id.clone());
+                modes.entry(mode.id.clone()).or_default().tick(
+                    &keys,
+                    hotkey,
+                    settings.hands_free,
+                    settings.auto_stop_silence,
+                    &allowed,
+                    Mode::Dictate,
+                    &start,
+                    &commands,
+                );
+            }
+            let instruct = || Command::Start(Mode::Command);
             match &settings.command_hotkey {
                 // Latching a command would leave nothing to say when it should end.
-                Some(hotkey) => command.tick(&keys, hotkey, false, false, Mode::Command, &commands),
+                Some(hotkey) => {
+                    command.tick(&keys, hotkey, false, false, &allowed, Mode::Command, &instruct, &commands)
+                }
                 // A shortcut removed mid-recording still has to end that recording.
                 None if command.recording() => {
                     let _ = commands.send(Command::Cancel(Mode::Command));
@@ -288,13 +375,21 @@ pub fn spawn(app: AppHandle, commands: Sender<Command>) {
                 None => {}
             }
             if let Some(hotkey) = &settings.repeat_hotkey {
-                repeat.tick(&keys, hotkey, &commands, || Command::Repeat);
+                repeat.tick(&keys, hotkey, &[], &commands, || Command::Repeat);
             }
             if let Some(hotkey) = &settings.undo_hotkey {
-                undo.tick(&keys, hotkey, &commands, || Command::Undo);
+                undo.tick(&keys, hotkey, &[], &commands, || Command::Undo);
             }
             if let Some(hotkey) = &settings.transform_hotkey {
-                transform.tick(&keys, hotkey, &commands, || Command::PickTransform);
+                transform.tick(&keys, hotkey, &[], &commands, || Command::PickTransform);
+            }
+            if let Some(hotkey) = &settings.mode_hotkey {
+                // Switching mid-recording means pressing it while a dictation key is held.
+                let mut talking = settings.hotkey.keys();
+                for mode in &settings.modes {
+                    talking.extend(mode.hotkey.iter().flat_map(Hotkey::keys));
+                }
+                cycle.tick(&keys, hotkey, &talking, &commands, || Command::CycleMode);
             }
         }
     });

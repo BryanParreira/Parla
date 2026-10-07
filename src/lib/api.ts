@@ -29,6 +29,44 @@ export type UpdateProgress =
 /** How far Enhance may go. Standard is what Parla has always done. */
 export type CleanupLevel = "light" | "standard" | "polished";
 
+/** What a mode starts from. Default is Parla as it always worked; Custom runs your own instructions. */
+export type ModePreset = "default" | "voice" | "message" | "email" | "note" | "custom";
+
+export type ModeExample = { input: string; output: string };
+
+/** Context a mode lets its cleanup see, all read on-device. */
+export type ModeContext = { selection: boolean; clipboard: boolean; app: boolean };
+
+export type Mode = {
+  id: string;
+  name: string;
+  preset: ModePreset;
+  instructions: string;
+  examples: ModeExample[];
+  context: ModeContext;
+  /** App names, bundle id fragments or website domains that switch to this mode. */
+  apps: string[];
+  hotkey: Hotkey | null;
+  /** Language code to write the result in; null keeps the spoken language. */
+  translate: string | null;
+  /** Overrides the Writing settings' cleanup level. */
+  level: CleanupLevel | null;
+};
+
+export const MODE_PRESETS: { value: ModePreset; label: string; hint: string }[] = [
+  { value: "default", label: "Default", hint: "Cleanup that matches the app you're in." },
+  { value: "voice", label: "Voice to Text", hint: "Exactly what you said, no cleanup. The fastest." },
+  { value: "message", label: "Message", hint: "Casual and brief, like a chat message." },
+  { value: "email", label: "Email", hint: "Properly punctuated, laid out with greeting and sign-off." },
+  { value: "note", label: "Note", hint: "Paragraphs and bullet lists for items and action points." },
+  { value: "custom", label: "Custom", hint: "Your own instructions, run on-device." },
+];
+
+export const MAX_MODES = 16;
+
+/** What other audio does while Parla listens. */
+export type OtherAudio = "keep" | "lower" | "mute";
+
 export type Settings = {
   hotkey: Hotkey;
   handsFree: boolean;
@@ -60,6 +98,19 @@ export type Settings = {
   /** Language Whisper is told to expect; null detects it. */
   language: string | null;
   onboarded: boolean;
+  modes: Mode[];
+  activeMode: string;
+  modeHotkey: Hotkey | null;
+  shiftToSend: boolean;
+  escCancels: boolean;
+  preferredMics: string[];
+  hiddenMics: string[];
+  boostInput: boolean;
+  otherAudio: OtherAudio;
+  trimSilence: boolean;
+  unloadAfterMinutes: number;
+  keepAudioDays: number;
+  trayClickRecords: boolean;
 };
 
 export const APP_STYLES: { value: AppStyle; label: string }[] = [
@@ -129,6 +180,16 @@ export type Entry = {
   app?: string;
   /** Style used there, such as "email". */
   style?: string;
+  /** Name of the mode that wrote it. */
+  mode?: string;
+  /** What the cleanup model was asked, when a mode added instructions or context. */
+  prompt?: string;
+  /** Context that went with it: "selection", "clipboard", "app". */
+  context?: string[];
+  /** The file it was transcribed from. */
+  source?: string;
+  /** Whether its audio is kept. */
+  audio?: boolean;
 };
 
 export type DictationEvent =
@@ -140,6 +201,8 @@ export type DictationEvent =
   | { phase: "cancelled" }
   | { phase: "undone" }
   | { phase: "blocked"; reason: string }
+  | { phase: "notice"; text: string }
+  | { phase: "working"; label: string }
   | { phase: "error"; message: string };
 
 /** Which keyboard the app is running on. Keycodes are the platform's own. */
@@ -385,4 +448,34 @@ export const api = {
   openRelease: (url: string) => invoke<void>("open_release", { url }),
   /** Downloads, checks and installs the update, then Parla quits and reopens. */
   installUpdate: (url: string) => invoke<void>("install_update", { url }),
+  /** Transcribes a file; with no path, asks for one. */
+  transcribeFile: (path?: string) => invoke<void>("transcribe_path", { path: path ?? null }),
+  reprocess: (id: number, mode: string) => invoke<Entry>("history_reprocess", { id, mode }),
+  /** A kept recording as a playable data URL. */
+  entryAudio: (id: number) => invoke<string | null>("history_audio", { id }),
+  exportBackup: (includeHistory: boolean) => invoke<string>("export_backup", { includeHistory }),
+  /** Asks for a backup file and restores it; false when the user cancelled. */
+  importBackup: () => invoke<boolean>("import_backup"),
+  openDataFolder: () => invoke<void>("open_data_folder"),
+  installCli: () => invoke<string>("install_cli"),
+  claudeCodeSetup: () => invoke<{ folder: string; commands: string[] }>("claude_code_setup"),
 };
+
+/** A fresh custom mode, with an id that won't clash with the others. */
+export function newMode(preset: ModePreset, existing: Mode[]): Mode {
+  const base = MODE_PRESETS.find((p) => p.value === preset)?.label ?? "Mode";
+  let name = base;
+  for (let n = 2; existing.some((m) => m.name.toLowerCase() === name.toLowerCase()); n++) name = `${base} ${n}`;
+  return {
+    id: `mode-${Date.now().toString(36)}`,
+    name,
+    preset,
+    instructions: "",
+    examples: [],
+    context: { selection: false, clipboard: false, app: false },
+    apps: [],
+    hotkey: null,
+    translate: null,
+    level: null,
+  };
+}

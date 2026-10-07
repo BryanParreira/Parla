@@ -1,9 +1,10 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { Check } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, EyeOff, Star } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { api, CLEANUP_LEVELS, IS_MAC, THIS_DEVICE, TRAY_NAME, LANGUAGE_NAMES, languageName, MAX_APP_RULES, MAX_DICTIONARY_TERMS, MAX_SNIPPETS, MAX_TRANSFORMS, WHISPER_LANGUAGES, type EnhanceStatus, type InputDevice, type Entry, type Hotkey, type ModelState, type ModelStatus, type Permissions, type Settings, type SpeechModel, type UpdateInfo } from "../lib/api";
+import { cx } from "../lib/utils";
+import { api, CLEANUP_LEVELS, IS_MAC, THIS_DEVICE, TRAY_NAME, LANGUAGE_NAMES, languageName, MAX_APP_RULES, MAX_DICTIONARY_TERMS, MAX_SNIPPETS, MAX_TRANSFORMS, WHISPER_LANGUAGES, type EnhanceStatus, type InputDevice, type Entry, type Hotkey, type ModelState, type ModelStatus, type Permissions, type OtherAudio, type Settings, type SpeechModel, type UpdateInfo } from "../lib/api";
 import { useSuggestions, useUpdateInstall } from "../lib/hooks";
-import { AppRuleList, Button, Card, HotkeyField, HotkeyPicker, PageHeader, Segmented, SnippetList, StatusDot, SuggestionList, TermList, Toggle, TransformList } from "./ui";
+import { AppRuleList, Button, CopyButton, HotkeyField, HotkeyPicker, PageHeader, Row, Section, Segmented, SnippetList, StatusDot, SuggestionList, TermList, Toggle, TransformList } from "./ui";
 
 const SPEECH_MODELS: { value: SpeechModel; label: string }[] = [
   { value: "parakeet", label: "Parakeet" },
@@ -11,6 +12,33 @@ const SPEECH_MODELS: { value: SpeechModel; label: string }[] = [
 ];
 
 const LANGUAGE_COUNT = Object.keys(LANGUAGE_NAMES).length;
+
+const OTHER_AUDIO: { value: OtherAudio; label: string }[] = [
+  { value: "keep", label: "Keep" },
+  { value: "lower", label: "Lower" },
+  { value: "mute", label: "Mute" },
+];
+
+const KEEP_AUDIO = [
+  { days: 0, label: "Don't keep" },
+  { days: 1, label: "1 day" },
+  { days: 7, label: "1 week" },
+  { days: 14, label: "2 weeks" },
+  { days: 30, label: "1 month" },
+  { days: 182, label: "6 months" },
+  { days: 365, label: "1 year" },
+];
+
+const IDLE_UNLOAD = [
+  { minutes: 0, label: "Never" },
+  { minutes: 5, label: "After 5 minutes" },
+  { minutes: 15, label: "After 15 minutes" },
+  { minutes: 30, label: "After 30 minutes" },
+  { minutes: 60, label: "After an hour" },
+];
+
+const SELECT =
+  "h-8 max-w-[220px] rounded-lg border border-line bg-raised/60 px-2.5 text-[12px] outline-none transition-colors focus:border-accent";
 const LANGUAGE_EXAMPLES = ["en", "es", "pt", "fr", "de", "it"].map((code) => LANGUAGE_NAMES[code]).join(", ");
 
 const ENHANCE_HINTS: Record<EnhanceStatus, string> = IS_MAC ? {
@@ -179,6 +207,18 @@ export default function SettingsPage({
             onChange={(transformHotkey) => save({ transformHotkey })}
           />
         </Row>}
+        <Row
+          label="Hold Shift to send"
+          description="Keep Shift down as you let go of the key and Parla presses Return after typing, to send a chat message straight away."
+        >
+          <Toggle checked={settings.shiftToSend} onChange={(shiftToSend) => save({ shiftToSend })} />
+        </Row>
+        <Row
+          label="Esc throws a recording away"
+          description="Press Esc while Parla is listening to discard what you said. Recordings longer than 30 seconds ask for a second press."
+        >
+          <Toggle checked={settings.escCancels} onChange={(escCancels) => save({ escCancels })} />
+        </Row>
         {shortcutError && <p className="px-4 pb-4 text-[12px] text-danger">{shortcutError}</p>}
       </Section>
 
@@ -199,6 +239,22 @@ export default function SettingsPage({
             {missingDevice && <option value={settings.inputDevice!}>Unplugged microphone</option>}
           </select>
         </Row>
+        {!settings.inputDevice && devices.length > 1 && (
+          <MicRanking
+            devices={devices}
+            preferred={settings.preferredMics}
+            hidden={settings.hiddenMics}
+            onChange={(patch) => save(patch)}
+          />
+        )}
+        {IS_MAC && (
+          <Row
+            label="Turn up the microphone"
+            description="Sets the input volume to full while you dictate, so a quiet microphone isn't heard as silence, and puts your level back afterwards."
+          >
+            <Toggle checked={settings.boostInput} onChange={(boostInput) => update({ boostInput })} />
+          </Row>
+        )}
         {IS_MAC && (
           <Row
             label="Whisper mode"
@@ -207,6 +263,12 @@ export default function SettingsPage({
             <Toggle checked={settings.softVoice} onChange={(softVoice) => update({ softVoice })} />
           </Row>
         )}
+        <Row
+          label={`Click the ${TRAY_NAME} icon to record`}
+          description={`A click starts and stops a dictation instead of opening the menu. ${IS_MAC ? "Right-click" : "Right-click"} still opens it. The icon shows what Parla is doing: red while it listens, blue while it writes, green once your text is in.`}
+        >
+          <Toggle checked={settings.trayClickRecords} onChange={(trayClickRecords) => update({ trayClickRecords })} />
+        </Row>
         <Row label="Open at login" description={`Start Parla quietly in the ${TRAY_NAME} when you log in.`}>
           <Toggle
             checked={launchAtLogin}
@@ -222,12 +284,15 @@ export default function SettingsPage({
           <Toggle checked={settings.sounds} onChange={(sounds) => update({ sounds })} />
         </Row>
         <Row
-          label="Mute other audio"
-          description="Silence music and video while you hold the key, then put the volume back exactly as it was."
+          label="Other audio while you talk"
+          description="Leave music and video playing, turn them down, or silence them. The volume goes back exactly as it was."
         >
-          <Toggle
-            checked={settings.muteOtherAudio}
-            onChange={(muteOtherAudio) => update({ muteOtherAudio })}
+          <Segmented
+            options={OTHER_AUDIO}
+            value={settings.muteOtherAudio ? settings.otherAudio === "keep" ? "keep" : settings.otherAudio : "keep"}
+            onChange={(choice) =>
+              update(choice === "keep" ? { muteOtherAudio: false } : { muteOtherAudio: true, otherAudio: choice })
+            }
           />
         </Row>
         <Row
@@ -452,6 +517,32 @@ export default function SettingsPage({
         <Row label="Parakeet streaming" description="Lightweight fallback while the main model loads.">
           <ModelBadge state={model?.streaming} progress={model?.state === "loading" ? model.progress : null} />
         </Row>
+        {IS_MAC && (
+          <Row
+            label="Cut out long silences"
+            description="Removes pauses of more than a second before transcribing, which stops Whisper inventing words for them. Short pauses stay as you spoke them."
+          >
+            <Toggle checked={settings.trimSilence} onChange={(trimSilence) => update({ trimSilence })} />
+          </Row>
+        )}
+        {IS_MAC && (
+          <Row
+            label="Free memory when idle"
+            description="Unloads the big speech models when you haven't dictated for a while. The next dictation still starts at once and the models load again while you talk."
+          >
+            <select
+              value={settings.unloadAfterMinutes}
+              onChange={(event) => update({ unloadAfterMinutes: Number(event.target.value) })}
+              className={SELECT}
+            >
+              {IDLE_UNLOAD.map((option) => (
+                <option key={option.minutes} value={option.minutes}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Row>
+        )}
         <Row
           label="Live preview"
           description="Show your words in the pill as you speak. Uses more of the Neural Engine while recording, so text can take a moment longer to land."
@@ -469,6 +560,32 @@ export default function SettingsPage({
           <span className="text-[12px] tabular-nums text-muted">Automatic</span>
         </Row>
       </Section>
+
+      <Section title="History and backup">
+        <Row
+          label="Keep recordings for"
+          description={
+            settings.keepAudioDays > 0
+              ? "Each dictation's audio is kept on this device so you can play it back and transcribe it again with another mode. Older ones are deleted on their own."
+              : "Off: audio is thrown away as soon as it's transcribed. Turning it on keeps it so you can replay a dictation or run it through another mode."
+          }
+        >
+          <select
+            value={settings.keepAudioDays}
+            onChange={(event) => update({ keepAudioDays: Number(event.target.value) })}
+            className={SELECT}
+          >
+            {KEEP_AUDIO.map((option) => (
+              <option key={option.days} value={option.days}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <BackupRows />
+      </Section>
+
+      <Integrations />
 
       <Section title="About">
         <Row label="Parla" description="Fast, private, on-device dictation.">
@@ -523,30 +640,6 @@ export default function SettingsPage({
   );
 }
 
-function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
-  return (
-    <section className="mb-6">
-      <div className="mb-2 px-1">
-        <h2 className="text-[13px] font-semibold">{title}</h2>
-        {description && <p className="text-[12px] text-muted">{description}</p>}
-      </div>
-      <Card className="divide-y divide-line">{children}</Card>
-    </section>
-  );
-}
-
-function Row({ label, description, children }: { label: string; description: string; children: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-6 px-4 py-3.5">
-      <div>
-        <p className="text-[13px] font-medium">{label}</p>
-        <p className="mt-0.5 text-[12px] text-muted">{description}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 function PermissionControl({ granted, onFix }: { granted: boolean; onFix: () => void }) {
   return granted ? (
     <span className="flex items-center gap-1.5 text-[12px] font-medium text-ok">
@@ -573,5 +666,201 @@ function ModelBadge({ state, progress }: { state?: ModelState; progress?: number
       <StatusDot tone={state === "ready" ? "ok" : "warn"} />
       {label}
     </span>
+  );
+}
+
+/** Microphones in the order Parla tries them, and the ones it never offers. */
+function MicRanking({
+  devices,
+  preferred,
+  hidden,
+  onChange,
+}: {
+  devices: InputDevice[];
+  preferred: string[];
+  hidden: string[];
+  onChange: (patch: Partial<Settings>) => void;
+}) {
+  const ranked = [
+    ...preferred.map((uid) => devices.find((d) => d.uid === uid)).filter((d): d is InputDevice => !!d),
+    ...devices.filter((d) => !preferred.includes(d.uid)),
+  ];
+  const move = (uid: string, by: number) => {
+    const order = preferred.filter((kept) => devices.some((d) => d.uid === kept));
+    const index = order.indexOf(uid);
+    const next = [...order];
+    next.splice(index, 1);
+    next.splice(Math.max(0, Math.min(next.length, index + by)), 0, uid);
+    onChange({ preferredMics: next });
+  };
+  const star = (uid: string) =>
+    onChange({
+      preferredMics: preferred.includes(uid) ? preferred.filter((kept) => kept !== uid) : [...preferred, uid],
+      hiddenMics: hidden.filter((kept) => kept !== uid),
+    });
+  const hide = (uid: string) =>
+    onChange({
+      hiddenMics: hidden.includes(uid) ? hidden.filter((kept) => kept !== uid) : [...hidden, uid],
+      preferredMics: preferred.filter((kept) => kept !== uid),
+    });
+
+  return (
+    <div className="px-4 py-3.5">
+      <p className="text-[13px] font-medium">Preferred microphones</p>
+      <p className="mt-0.5 text-[12px] text-muted">
+        Star the ones you trust. Parla uses the first starred microphone that's plugged in, so headphones joining
+        can't take over. Hidden ones never show in the menu.
+      </p>
+      <div className="mt-2.5 flex flex-col gap-1.5">
+        {ranked.map((device) => {
+          const starred = preferred.includes(device.uid);
+          const position = preferred.indexOf(device.uid);
+          const off = hidden.includes(device.uid);
+          return (
+            <div key={device.uid} className={cx("flex items-center gap-2 rounded-lg border border-line bg-raised/60 py-1.5 pl-3 pr-1.5 text-[12.5px]", off && "opacity-50")}>
+              <span className="w-4 text-[11px] tabular-nums text-muted">{starred ? position + 1 : ""}</span>
+              <span className="min-w-0 flex-1 truncate">{device.name}</span>
+              {starred && (
+                <>
+                  <IconButton title="Try sooner" disabled={position === 0} onClick={() => move(device.uid, -1)}>
+                    <ChevronUp className="size-3.5" />
+                  </IconButton>
+                  <IconButton title="Try later" disabled={position === preferred.length - 1} onClick={() => move(device.uid, 1)}>
+                    <ChevronDown className="size-3.5" />
+                  </IconButton>
+                </>
+              )}
+              <IconButton title={starred ? "Don't prefer" : "Prefer this one"} onClick={() => star(device.uid)}>
+                <Star className={cx("size-3.5", starred && "fill-current text-fg")} />
+              </IconButton>
+              <IconButton title={off ? "Show again" : "Hide"} onClick={() => hide(device.uid)}>
+                <EyeOff className={cx("size-3.5", off && "text-fg")} />
+              </IconButton>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function IconButton({ title, onClick, disabled, children }: { title: string; onClick: () => void; disabled?: boolean; children: ReactNode }) {
+  return (
+    <button
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="grid size-6 shrink-0 place-items-center rounded text-muted transition-colors hover:text-fg disabled:opacity-30"
+    >
+      {children}
+    </button>
+  );
+}
+
+function BackupRows() {
+  const [note, setNote] = useState<string | null>(null);
+  const run = async (work: () => Promise<string | null>) => {
+    setNote(null);
+    try {
+      setNote(await work());
+    } catch (error) {
+      setNote(String(error));
+    }
+  };
+  return (
+    <>
+      <Row
+        label="Back up"
+        description={note ?? "Saves your settings, modes, words and snippets to one file in Downloads, to restore later or on another Mac."}
+      >
+        <div className="flex shrink-0 gap-2">
+          <Button variant="secondary" className="h-8 text-[12px]" onClick={() => run(async () => `Saved to ${await api.exportBackup(false)}`)}>
+            Export
+          </Button>
+          <Button variant="secondary" className="h-8 text-[12px]" title="Includes every dictation" onClick={() => run(async () => `Saved to ${await api.exportBackup(true)}`)}>
+            With history
+          </Button>
+          {IS_MAC && (
+            <Button variant="secondary" className="h-8 text-[12px]" onClick={() => run(async () => ((await api.importBackup()) ? "Restored." : null))}>
+              Restore…
+            </Button>
+          )}
+        </div>
+      </Row>
+      <Row label="Data folder" description="Where Parla keeps its settings, history and kept recordings.">
+        <Button variant="secondary" className="h-8 text-[12px]" onClick={() => api.openDataFolder().catch(() => {})}>
+          Show
+        </Button>
+      </Row>
+    </>
+  );
+}
+
+/** The command-line tool, and Claude Code. */
+function Integrations() {
+  const [cli, setCli] = useState<string | null>(null);
+  const [setup, setSetup] = useState<{ folder: string; commands: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (!IS_MAC) return null;
+  return (
+    <Section title="Integrations" description="For scripts and coding agents. All of it runs on this Mac.">
+      <Row
+        label="Command-line tool"
+        description={
+          cli ?? "Adds `parla` to your terminal: search and export your history, see stats, manage words and snippets, start a recording or transcribe a file."
+        }
+      >
+        <Button
+          variant="secondary"
+          className="h-8 text-[12px]"
+          onClick={() =>
+            api
+              .installCli()
+              .then((path) => setCli(`Installed at ${path}. Try \`parla stats\` or \`parla help\`.`))
+              .catch((reason) => setCli(String(reason)))
+          }
+        >
+          Install
+        </Button>
+      </Row>
+      <Row
+        label="Claude Code"
+        description="Parla's pill tells you when Claude Code needs an answer or has finished, so you can reply by voice, and Claude can search your dictations and add words over MCP."
+      >
+        <Button
+          variant="secondary"
+          className="h-8 text-[12px]"
+          onClick={() =>
+            api
+              .claudeCodeSetup()
+              .then(setSetup)
+              .catch((reason) => setError(String(reason)))
+          }
+        >
+          Set up
+        </Button>
+      </Row>
+      {error && <p className="px-4 pb-3 text-[12px] text-danger">{error}</p>}
+      {setup && (
+        <div className="px-4 py-3.5">
+          <p className="text-[12px] text-muted">The plugin is ready. Run these two commands in a terminal, then restart Claude Code:</p>
+          {setup.commands.map((command) => (
+            <div key={command} className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-bg/60 py-1 pl-3 pr-1">
+              <code className="selectable min-w-0 flex-1 truncate text-[12px]">{command}</code>
+              <CopyButton text={command} />
+            </div>
+          ))}
+        </div>
+      )}
+      <Row
+        label="MCP for other assistants"
+        description="Any MCP client can run Parla's server with the command below. It reads your history, words and snippets; what it reads goes to that assistant."
+      >
+        <span className="flex shrink-0 items-center gap-1">
+          <code className="selectable text-[12px] text-muted">parla mcp</code>
+          <CopyButton text="claude mcp add parla -- parla mcp" />
+        </span>
+      </Row>
+    </Section>
   );
 }

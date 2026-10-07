@@ -34,8 +34,19 @@ pub fn insert(app: &AppHandle, text: &str) -> Result<Delivery, String> {
     if let Some(previous) = previous {
         let _ = clipboard.write_text(previous);
     }
+    crate::engine::note_clipboard();
 
     Ok(Delivery::Pasted)
+}
+
+/// Presses Return, to send a message right after pasting it.
+pub fn press_return() -> Result<(), String> {
+    if !accessibility_granted() {
+        return Err("Parla needs Accessibility permission to send a message.".into());
+    }
+    // The paste has to land before Return does, or an app could send an empty message.
+    thread::sleep(Duration::from_millis(80));
+    native::enter()
 }
 
 /// The text selected in the frontmost app. Accessibility answers directly in native
@@ -60,6 +71,7 @@ pub fn selection(app: &AppHandle) -> String {
     if let Some(previous) = previous {
         let _ = clipboard.write_text(previous);
     }
+    crate::engine::note_clipboard();
     copied
 }
 
@@ -128,6 +140,12 @@ mod native {
         press(KEYCODE_DELETE, 0, UNDO_KEY_GAP)
     }
 
+    // No modifier flags: the Shift the user is still holding would otherwise turn it
+    // into Shift+Return, which most chat apps take as a new line.
+    pub fn enter() -> Result<(), String> {
+        press(KEYCODE_RETURN, 0, Duration::from_millis(15))
+    }
+
 fn press(keycode: u16, flags: u64, gap: Duration) -> Result<(), String> {
     unsafe {
         let source = CGEventSourceCreate(EVENT_SOURCE_HID_SYSTEM_STATE);
@@ -161,6 +179,7 @@ fn press(keycode: u16, flags: u64, gap: Duration) -> Result<(), String> {
 const KEYCODE_C: u16 = 8;
 const KEYCODE_V: u16 = 9;
 const KEYCODE_DELETE: u16 = 51;
+const KEYCODE_RETURN: u16 = 36;
 // Long enough for the app in front to see every press, short enough that taking a whole
 // paragraph back still feels immediate.
 const UNDO_KEY_GAP: Duration = Duration::from_micros(900);
@@ -224,6 +243,13 @@ mod native {
 
     pub fn copy() -> Result<(), String> {
         chord('c')
+    }
+
+    pub fn enter() -> Result<(), String> {
+        let mut keys = keyboard()?;
+        // The Shift the user is still holding would make this Shift+Enter, a new line.
+        let _ = keys.key(Key::Shift, Direction::Release);
+        keys.key(Key::Return, Direction::Click).map_err(|e| e.to_string())
     }
 
     pub fn delete() -> Result<(), String> {

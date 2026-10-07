@@ -4,12 +4,19 @@
 use serde::Deserialize;
 use swift_rs::{swift, Bool, Int, SRString};
 
-use super::{InputDevice, ModelStatus, Release, StartOptions, Transcript};
+use super::{ContextReply, InputDevice, ModelStatus, ProcessRequest, Release, StartOptions, Transcript};
 
 swift!(fn parla_model_status() -> SRString);
 swift!(fn parla_prepare_model() -> Bool);
-swift!(fn parla_start(live: Bool, device: &SRString, whisper: Bool, language: &SRString, soft_voice: Bool) -> SRString);
-swift!(fn parla_start_context(enhance: Bool, quick: Bool, terms: &SRString, match_app: Bool, level: &SRString, rules: &SRString, use_context: Bool, formatting: Bool) -> Bool);
+swift!(fn parla_start(live: Bool, device: &SRString, whisper: Bool, language: &SRString, soft_voice: Bool, trim: Bool, boost: Bool) -> SRString);
+swift!(fn parla_start_context(request: &SRString) -> SRString);
+swift!(fn parla_note_clipboard() -> Bool);
+swift!(fn parla_set_idle_unload(minutes: Int) -> Bool);
+swift!(fn parla_process_file(path: &SRString, request: &SRString) -> SRString);
+swift!(fn parla_clean_text(text: &SRString, request: &SRString) -> SRString);
+swift!(fn parla_file_progress() -> f64);
+swift!(fn parla_choose_file(kind: &SRString) -> SRString);
+swift!(fn parla_menu_bar_dark() -> Bool);
 swift!(fn parla_prepare_whisper() -> Bool);
 swift!(fn parla_warm_microphone(device: &SRString) -> Bool);
 swift!(fn parla_focused_text() -> SRString);
@@ -23,14 +30,14 @@ swift!(fn parla_partial() -> SRString);
 swift!(fn parla_selected_text() -> SRString);
 swift!(fn parla_pick(names: &SRString) -> Int);
 swift!(fn parla_run_command(instruction: &SRString, passage: &SRString) -> SRString);
-swift!(fn parla_stop() -> SRString);
+swift!(fn parla_stop(audio_path: &SRString) -> SRString);
 swift!(fn parla_cancel() -> Bool);
 swift!(fn parla_level() -> f32);
 swift!(fn parla_mic_permission() -> Int);
 swift!(fn parla_request_mic() -> Bool);
 swift!(fn parla_request_accessibility() -> Bool);
 swift!(fn parla_play_cue(start: Bool) -> Bool);
-swift!(fn parla_duck_audio(enable: Bool, mute: Bool, pause: Bool) -> Bool);
+swift!(fn parla_duck_audio(enable: Bool, mute: Bool, pause: Bool, lower: Bool) -> Bool);
 swift!(fn parla_float_overlay(window: Int) -> Bool);
 
 pub fn status() -> ModelStatus {
@@ -49,7 +56,15 @@ pub fn start(options: &StartOptions) -> Result<(), String> {
     let device = SRString::from(options.device.unwrap_or(""));
     let language = SRString::from(options.language);
     let error = unsafe {
-        parla_start(options.live, &device, options.whisper, &language, options.soft_voice)
+        parla_start(
+            options.live,
+            &device,
+            options.whisper,
+            &language,
+            options.soft_voice,
+            options.trim,
+            options.boost,
+        )
     };
     match error.as_str() {
         "" => Ok(()),
@@ -57,24 +72,66 @@ pub fn start(options: &StartOptions) -> Result<(), String> {
     }
 }
 
-/// Reads the app and cursor context for the cleanup. Called once recording has started,
-/// so the first words are never lost to it.
-pub fn start_context(options: &StartOptions) {
-    let terms = SRString::from(options.dictionary.join("\n").as_str());
-    let level = SRString::from(options.level);
-    let rules = SRString::from(options.rules.as_str());
-    let _ = unsafe {
-        parla_start_context(
-            options.enhance,
-            options.quick,
-            &terms,
-            options.match_app,
-            &level,
-            &rules,
-            options.use_context,
-            options.formatting,
-        )
-    };
+/// Reads the app and cursor context for the cleanup and picks the mode. Called once
+/// recording has started, so the first words are never lost to it, and again when the
+/// user switches modes mid-recording.
+pub fn start_context(options: &StartOptions) -> Option<ContextReply> {
+    let request = serde_json::json!({
+        "enhance": options.enhance,
+        "quick": options.quick,
+        "terms": options.dictionary,
+        "matchApp": options.match_app,
+        "level": options.level,
+        "rules": options.rules,
+        "useContext": options.use_context,
+        "formatting": options.formatting,
+        "modes": options.modes,
+        "modeRules": options.mode_rules,
+        "activeMode": options.active_mode,
+        "forcedMode": options.forced_mode,
+    });
+    let request = SRString::from(request.to_string().as_str());
+    serde_json::from_str(unsafe { parla_start_context(&request) }.as_str()).ok()
+}
+
+/// Parla wrote the clipboard itself, which a mode must never take for something the user
+/// copied.
+pub fn note_clipboard() {
+    let _ = unsafe { parla_note_clipboard() };
+}
+
+pub fn set_idle_unload(minutes: u32) {
+    let _ = unsafe { parla_set_idle_unload(minutes as Int) };
+}
+
+/// Transcribes an audio or video file, or a kept recording, through a mode. Blocks until
+/// it is done, which for a long file is minutes.
+pub fn process_file(path: &std::path::Path, request: &ProcessRequest) -> Result<Transcript, String> {
+    let path = SRString::from(path.to_string_lossy().as_ref());
+    let request = SRString::from(serde_json::to_string(request).map_err(|e| e.to_string())?.as_str());
+    parse_transcript(unsafe { parla_process_file(&path, &request) })
+}
+
+/// Runs text already transcribed through a mode again.
+pub fn clean_text(text: &str, request: &ProcessRequest) -> Result<Transcript, String> {
+    let text = SRString::from(text);
+    let request = SRString::from(serde_json::to_string(request).map_err(|e| e.to_string())?.as_str());
+    parse_transcript(unsafe { parla_clean_text(&text, &request) })
+}
+
+/// How far the file being processed has got, from 0 to 1.
+pub fn file_progress() -> f64 {
+    unsafe { parla_file_progress() }
+}
+
+/// Asks the user for a file: "media" for audio or video, "json" for a backup.
+pub fn choose_file(kind: &str) -> Option<std::path::PathBuf> {
+    let path = unsafe { parla_choose_file(&SRString::from(kind)) }.as_str().to_string();
+    (!path.is_empty()).then(|| path.into())
+}
+
+pub fn menu_bar_dark() -> bool {
+    unsafe { parla_menu_bar_dark() }
 }
 
 /// Sets up the audio engine ahead of time so pressing the key records right away. The
@@ -130,8 +187,10 @@ pub fn sensitive_context() -> Option<String> {
     (!reason.is_empty()).then_some(reason)
 }
 
-pub fn stop() -> Result<Transcript, String> {
-    parse_transcript(unsafe { parla_stop() })
+/// Ends the recording and returns its text, keeping the audio at `audio` when given.
+pub fn stop(audio: Option<&std::path::Path>) -> Result<Transcript, String> {
+    let path = SRString::from(audio.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default().as_str());
+    parse_transcript(unsafe { parla_stop(&path) })
 }
 
 fn parse_transcript(raw: SRString) -> Result<Transcript, String> {
@@ -216,13 +275,13 @@ pub fn play_cue(start: bool) {
 // Silences whatever else is playing so it neither bleeds into the microphone nor
 // talks over the user. Turning it off restores the exact level it replaced.
 pub fn duck_audio(enable: bool) {
-    let _ = unsafe { parla_duck_audio(enable, false, false) };
+    let _ = unsafe { parla_duck_audio(enable, false, false, false) };
 }
 
-/// Mutes the speakers and/or pauses whatever music or video is playing, until
-/// `duck_audio(false)` puts it all back.
-pub fn quiet_other_audio(mute: bool, pause: bool) {
-    let _ = unsafe { parla_duck_audio(true, mute, pause) };
+/// Mutes or turns down the speakers and/or pauses whatever music or video is playing,
+/// until `duck_audio(false)` puts it all back.
+pub fn quiet_other_audio(mute: bool, pause: bool, lower: bool) {
+    let _ = unsafe { parla_duck_audio(true, mute, pause, lower) };
 }
 
 // Keeps the overlay above every app, full-screen ones included. Must run on the main

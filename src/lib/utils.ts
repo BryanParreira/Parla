@@ -7,6 +7,9 @@ export const cx = (...classes: (string | false | null | undefined)[]) =>
   classes.filter(Boolean).join(" ");
 
 export function computeStats(entries: Entry[]) {
+  // Transcribed files were never going to be typed, so they count as neither words
+  // dictated nor time saved.
+  entries = entries.filter((e) => !e.source);
   const words = entries.reduce((sum, e) => sum + e.words, 0);
   const speakingMs = entries.reduce((sum, e) => sum + e.durationMs, 0);
   const weekAgo = Date.now() - 7 * DAY_MS;

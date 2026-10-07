@@ -29,7 +29,8 @@ use llama_cpp_2::{
 use serde::Deserialize;
 use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
 
-use super::{InputDevice, ModelStatus, Release, StartOptions, Transcript};
+use super::{ContextReply, InputDevice, ModelStatus, ProcessRequest, Release, StartOptions, Transcript};
+use crate::settings::ModeConfig;
 
 const SAMPLE_RATE: u32 = 16_000;
 // Shorter or quieter recordings are accidental taps, and Parakeet tends to invent words
@@ -328,6 +329,44 @@ struct Prepared {
     formatting: bool,
     style: Option<String>,
     note: Option<String>,
+    /// What the mode asks for on top of the cleanup.
+    directions: Directions,
+    mode: Option<String>,
+    /// Lines of context for the model: the app, the user's name.
+    context: Vec<String>,
+}
+
+/// A mode's instructions, examples and language, like the Mac's.
+#[derive(Default, Clone)]
+struct Directions {
+    custom: Option<String>,
+    extra: Option<String>,
+    examples: Vec<(String, String)>,
+    translate: Option<String>,
+    note: bool,
+}
+
+impl Directions {
+    fn from_mode(mode: &ModeConfig) -> Self {
+        let instructions = mode.instructions.trim().to_string();
+        Self {
+            custom: (mode.preset == "custom")
+                .then(|| if instructions.is_empty() { "Clean up the dictation.".into() } else { instructions.clone() }),
+            extra: (mode.preset != "custom" && !instructions.is_empty()).then_some(instructions),
+            examples: mode.examples.iter().map(|e| (e.input.clone(), e.output.clone())).collect(),
+            translate: mode.translate.clone(),
+            note: mode.preset == "note",
+        }
+    }
+
+    /// The answer may use words that were never spoken.
+    fn free(&self) -> bool {
+        self.custom.is_some() || self.translate.is_some()
+    }
+
+    fn tailored(&self) -> bool {
+        self.free() || self.extra.is_some() || !self.examples.is_empty() || self.note
+    }
 }
 
 pub fn start(options: &StartOptions) -> Result<(), String> {
@@ -456,27 +495,66 @@ fn resample(input: &[f32], from: u32) -> Vec<f32> {
         .collect()
 }
 
-/// Reads where the text is going, for Enhance. Called once recording has started.
-pub fn start_context(options: &StartOptions) {
+/// Reads where the text is going and picks the mode: the one asked for, else the first
+/// whose apps match, else the active one. Called once recording has started.
+pub fn start_context(options: &StartOptions) -> Option<ContextReply> {
     let app = frontmost_app().unwrap_or_default();
-    let (note, style) = if options.enhance && options.match_app {
-        tone_for(&app, &options.rules)
-    } else {
-        (None, None)
+    let find = |id: &str| options.modes.iter().find(|mode| mode.id == id);
+    let lowered = app.to_lowercase();
+    let by_app = options.mode_rules.lines().find_map(|line| {
+        let (matcher, id) = line.split_once('\t')?;
+        let matcher = matcher.trim().to_lowercase();
+        (!matcher.is_empty() && !lowered.is_empty() && lowered.contains(&matcher)).then_some(id)
+    });
+    let mode = options
+        .forced_mode
+        .and_then(find)
+        .or_else(|| by_app.and_then(find))
+        .or_else(|| find(options.active_mode))
+        .or(options.modes.first())?;
+
+    let mut enhance = options.enhance && mode.cleans_up();
+    let (note, style) = match mode.style() {
+        Some(pinned) => (style_note(pinned), Some(pinned.to_string())),
+        None if enhance && options.match_app => tone_for(&app, &options.rules),
+        None => (None, None),
     };
-    let enhance = options.enhance && style.as_deref() != Some("off");
+    // An app set to plain text wins over Default, but not over a mode picked on purpose.
+    if style.as_deref() == Some("off") && mode.preset == crate::settings::DEFAULT_MODE {
+        enhance = false;
+    }
+    let mut context = Vec::new();
+    let mut captured = Vec::new();
+    if enhance && mode.context.app {
+        if !app.is_empty() {
+            context.push(format!("App: {app}"));
+        }
+        if let Some(name) = user_first_name() {
+            context.push(format!("User: {name}"));
+        }
+        captured.push("app".to_string());
+    }
+    let directions = Directions::from_mode(mode);
     *engine().prepared.lock().unwrap() = Prepared {
         enhance,
-        quick: options.quick,
+        quick: options.quick && !directions.tailored(),
         terms: options.dictionary.to_vec(),
-        level: options.level.to_string(),
+        level: mode.level.map(|l| l.as_str()).unwrap_or(options.level).to_string(),
         formatting: options.formatting,
-        style,
+        style: style.filter(|s| s != "off"),
         note,
+        directions,
+        mode: Some(mode.id.clone()),
+        context,
     };
+    Some(ContextReply { mode: mode.id.clone(), captured })
 }
 
-pub fn stop() -> Result<Transcript, String> {
+fn style_note(style: &str) -> Option<String> {
+    STYLE_NOTES.iter().find(|(s, _)| *s == style).map(|(_, n)| n.to_string())
+}
+
+pub fn stop(audio: Option<&Path>) -> Result<Transcript, String> {
     let e = engine();
     let recording = e.recording.lock().unwrap().take().ok_or("Nothing was being recorded.")?;
     // The device buffer still holds the last syllable when the key comes up.
@@ -484,6 +562,9 @@ pub fn stop() -> Result<Transcript, String> {
     let _ = recording.stop.send(());
     let raw = std::mem::take(&mut *recording.samples.lock().unwrap());
     let samples = resample(&raw, recording.rate);
+    if let Some(path) = audio {
+        let _ = write_wav(&samples, path);
+    }
     let audio_ms = (samples.len() as u64 * 1000) / SAMPLE_RATE as u64;
     log(format!(
         "recording stopped after {} ms: {audio_ms} ms of audio",
@@ -517,8 +598,10 @@ pub fn stop() -> Result<Transcript, String> {
 
     let prepared = e.prepared.lock().unwrap().clone();
     transcript.style = prepared.style.clone();
+    transcript.mode = prepared.mode.clone();
     transcript.text = text.clone();
-    if prepared.enhance && word_count(&text) >= ENHANCE_MIN_WORDS {
+    let least = if prepared.directions.free() { 1 } else { ENHANCE_MIN_WORDS };
+    if prepared.enhance && word_count(&text) >= least {
         let worth_it = !prepared.quick
             || needs_cleanup(&text, transcript.language.as_deref(), &prepared.terms);
         if worth_it {
@@ -696,6 +779,38 @@ impl Llm {
     }
 }
 
+/// The cleanup rules, or a custom mode's own instructions, with what the mode adds.
+fn instructions_for(prepared: &Prepared) -> String {
+    let directions = &prepared.directions;
+    let mut text = match &directions.custom {
+        Some(custom) => format!(
+            "You process dictated speech the way the user's instructions below say.\n- The dictation was spoken, so drop filler words and false starts first.\n- Output only the result: no preamble, explanation, quotes or tags.\nThe user's instructions:\n{custom}"
+        ),
+        None => {
+            let mut base = instructions(&prepared.level, false, None);
+            if directions.note {
+                base.push_str("\n- Lay it out as a note: short paragraphs, and a bulleted list (\"- \") wherever the speaker lists items, steps or action items. Never add a point they did not make.");
+            }
+            if let Some(extra) = &directions.extra {
+                base.push_str("\n- Also: ");
+                base.push_str(extra);
+            }
+            base
+        }
+    };
+    if let Some(name) = directions.translate.as_deref().and_then(language_name) {
+        text.push_str(&format!("\n- Write the result in {name}, translating it when it was spoken in another language."));
+    }
+    if prepared.formatting {
+        text.push_str("\n- Keep spoken formatting commands exactly as spoken, such as \"new line\", \"new paragraph\", \"bullet point\", \"comma\", \"question mark\", \"camel case\", \"snake case\" and \"number one\" (or \"nova linha\", \"vírgula\"). They are applied after you.");
+    }
+    if let Some(note) = &prepared.note {
+        text.push_str("\nWhere the text is going: ");
+        text.push_str(note);
+    }
+    text
+}
+
 fn instructions(level: &str, formatting: bool, note: Option<&str>) -> String {
     let shared = "You turn dictated speech into clean written text.
 - Remove filler words (um, uh, like, you know) and accidental repetitions.
@@ -754,19 +869,32 @@ fn enhance(text: &str, language: Option<&str>, prepared: &Prepared) -> Option<St
     );
     let llm = engine().llm.lock().unwrap();
     let llm = llm.as_ref()?;
-    let system = instructions(&prepared.level, prepared.formatting, prepared.note.as_deref());
+    let directions = &prepared.directions;
+    let system = instructions_for(prepared);
+    // The worked example teaches plain cleanup, which a custom mode isn't doing.
+    let mut shown = if directions.custom.is_some() { Vec::new() } else { examples(&prepared.level) };
+    shown.extend(directions.examples.iter().map(|(input, output)| (prompt(input, None, &[]), output.clone())));
+    let mut request = prompt(text, language, &prepared.terms);
+    if !prepared.context.is_empty() {
+        request = format!(
+            "<context>\n{}\n</context>\nThe context above is reference only: never copy it into your answer.\n{request}",
+            prepared.context.join("\n")
+        );
+    }
+    if let Some(name) = directions.translate.as_deref().and_then(language_name) {
+        request.push_str(&format!("\nWrite the result in {name}."));
+    }
+    let budget = if directions.free() { words * 4 + 256 } else { words * 2 + 32 };
     let started = Instant::now();
-    let output = llm.respond(
-        &system,
-        &examples(&prepared.level),
-        &prompt(text, language, &prepared.terms),
-        words * 2 + 32,
-        deadline,
-    );
+    let output = llm.respond(&system, &shown, &request, budget, deadline);
     match output {
         Ok(output) => {
             let cleaned = tidy(&output);
-            let accepted = is_acceptable(text, &cleaned, &prepared.terms);
+            let accepted = if directions.free() {
+                !cleaned.is_empty() && cleaned.chars().count() <= text.chars().count() * 6 + 400
+            } else {
+                is_acceptable(text, &cleaned, &prepared.terms)
+            };
             log(format!(
                 "enhance took {} ms, {}",
                 started.elapsed().as_millis(),
@@ -1170,7 +1298,183 @@ pub fn play_cue(_start: bool) {}
 
 pub fn duck_audio(_enable: bool) {}
 
-pub fn quiet_other_audio(_mute: bool, _pause: bool) {}
+pub fn quiet_other_audio(_mute: bool, _pause: bool, _lower: bool) {}
+
+/// Windows and Linux have no change counter to watch on the clipboard.
+pub fn note_clipboard() {}
+
+/// The Rust engine's models are small enough to keep loaded.
+pub fn set_idle_unload(_minutes: u32) {}
+
+/// No native file picker yet on Windows and Linux; files can be dropped on the window.
+pub fn choose_file(_kind: &str) -> Option<PathBuf> {
+    None
+}
+
+pub fn menu_bar_dark() -> bool {
+    true
+}
+
+static FILE_PROGRESS: AtomicU64 = AtomicU64::new(0);
+
+pub fn file_progress() -> f64 {
+    f64::from_bits(FILE_PROGRESS.load(Ordering::Relaxed))
+}
+
+fn set_file_progress(value: f64) {
+    FILE_PROGRESS.store(value.to_bits(), Ordering::Relaxed);
+}
+
+/// Transcribes a WAV file, such as a kept recording, through a mode. Other formats need
+/// decoders the Rust engine doesn't carry yet.
+pub fn process_file(path: &Path, request: &ProcessRequest) -> Result<Transcript, String> {
+    set_file_progress(0.0);
+    let samples = read_wav(path)?;
+    let mut transcript = Transcript {
+        audio_ms: Some(samples.len() as u64 * 1000 / SAMPLE_RATE as u64),
+        mode: Some(request.mode.id.clone()),
+        ..Default::default()
+    };
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32).sqrt();
+    if rms < SILENCE_RMS {
+        return Ok(transcript);
+    }
+    let started = Instant::now();
+    let text = {
+        let mut speech = engine().speech.lock().unwrap();
+        let recognizer = speech.as_mut().ok_or("The speech model is still loading.")?;
+        // Parakeet reads long audio in pieces of half a minute.
+        samples
+            .chunks(SAMPLE_RATE as usize * 30)
+            .map(|chunk| recognizer.transcribe(SAMPLE_RATE, chunk).trim().to_string())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    transcript.transcribe_ms = Some(started.elapsed().as_millis() as u64);
+    set_file_progress(0.5);
+    let cleaned = clean_text(&text, request)?;
+    Ok(Transcript { text: cleaned.text, raw: cleaned.raw, enhance_ms: cleaned.enhance_ms, language: cleaned.language, style: cleaned.style, ..transcript })
+}
+
+/// Runs text through a mode again, a passage at a time.
+pub fn clean_text(text: &str, request: &ProcessRequest) -> Result<Transcript, String> {
+    let language = detect_language(text);
+    let mut transcript = Transcript {
+        text: text.to_string(),
+        language: language.clone(),
+        mode: Some(request.mode.id.clone()),
+        ..Default::default()
+    };
+    if !request.enhance || !request.mode.cleans_up() || text.trim().is_empty() || word_count(text) > 6000 {
+        set_file_progress(1.0);
+        return Ok(transcript);
+    }
+    let style = request.mode.style().map(str::to_string);
+    let prepared = Prepared {
+        enhance: true,
+        terms: request.terms.to_vec(),
+        level: request.mode.level.map(|l| l.as_str()).unwrap_or(request.level).to_string(),
+        note: style.as_deref().and_then(style_note),
+        style: style.clone(),
+        directions: Directions::from_mode(request.mode),
+        ..Default::default()
+    };
+    let started = Instant::now();
+    let mut passages: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for word in text.split_whitespace() {
+        current.push(word);
+        let ends = word.ends_with(['.', '!', '?']);
+        if (current.len() >= 120 && ends) || current.len() >= 240 {
+            passages.push(current.join(" "));
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        passages.push(current.join(" "));
+    }
+    let count = passages.len();
+    let cleaned: Vec<String> = passages
+        .into_iter()
+        .enumerate()
+        .map(|(index, passage)| {
+            let result = enhance(&passage, language.as_deref(), &prepared).unwrap_or(passage);
+            set_file_progress(0.5 + 0.5 * (index + 1) as f64 / count as f64);
+            result
+        })
+        .collect();
+    let mut result = cleaned.join(if count > 1 { "\n\n" } else { "" });
+    if style.as_deref() == Some("email") {
+        result = super::email::apply(&result, user_first_name().as_deref(), false);
+    }
+    transcript.enhance_ms = Some(started.elapsed().as_millis() as u64);
+    transcript.style = style;
+    if result != text {
+        transcript.raw = Some(text.to_string());
+        transcript.text = result;
+    }
+    Ok(transcript)
+}
+
+/// 16-bit mono WAV, the same format the Mac keeps recordings in.
+fn write_wav(samples: &[f32], path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = (samples.len() * 2) as u32;
+    let mut data = Vec::with_capacity(44 + samples.len() * 2);
+    data.extend_from_slice(b"RIFF");
+    data.extend_from_slice(&(36 + bytes).to_le_bytes());
+    data.extend_from_slice(b"WAVEfmt ");
+    data.extend_from_slice(&16u32.to_le_bytes());
+    data.extend_from_slice(&1u16.to_le_bytes());
+    data.extend_from_slice(&1u16.to_le_bytes());
+    data.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+    data.extend_from_slice(&(SAMPLE_RATE * 2).to_le_bytes());
+    data.extend_from_slice(&2u16.to_le_bytes());
+    data.extend_from_slice(&16u16.to_le_bytes());
+    data.extend_from_slice(b"data");
+    data.extend_from_slice(&bytes.to_le_bytes());
+    for sample in samples {
+        data.extend_from_slice(&((sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).to_le_bytes());
+    }
+    fs::write(path, data).map_err(|e| e.to_string())
+}
+
+/// Reads PCM WAV (16-bit or 32-bit float, any rate and channel count) as 16 kHz mono.
+fn read_wav(path: &Path) -> Result<Vec<f32>, String> {
+    let unsupported = || "On this computer Parla can transcribe WAV files only for now.".to_string();
+    let data = fs::read(path).map_err(|e| e.to_string())?;
+    if data.len() < 12 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
+        return Err(unsupported());
+    }
+    let (mut format, mut channels, mut rate, mut bits) = (0u16, 0u16, 0u32, 0u16);
+    let mut offset = 12;
+    while offset + 8 <= data.len() {
+        let id = &data[offset..offset + 4];
+        let size = u32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let body = &data[offset + 8..(offset + 8 + size).min(data.len())];
+        if id == b"fmt " && body.len() >= 16 {
+            format = u16::from_le_bytes([body[0], body[1]]);
+            channels = u16::from_le_bytes([body[2], body[3]]);
+            rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
+            bits = u16::from_le_bytes([body[14], body[15]]);
+        } else if id == b"data" {
+            let channels = channels.max(1) as usize;
+            let frames: Vec<f32> = match (format, bits) {
+                (1, 16) => body.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / i16::MAX as f32).collect(),
+                (3, 32) => body.chunks_exact(4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect(),
+                _ => return Err(unsupported()),
+            };
+            let mono: Vec<f32> =
+                frames.chunks(channels).map(|frame| frame.iter().sum::<f32>() / channels as f32).collect();
+            return Ok(resample(&mono, rate));
+        }
+        offset += 8 + size + (size & 1);
+    }
+    Err(unsupported())
+}
 
 pub fn float_overlay(_window: *mut std::ffi::c_void) {}
 

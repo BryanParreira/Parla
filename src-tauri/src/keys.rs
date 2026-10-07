@@ -34,6 +34,8 @@ mod platform {
     /// Either Option key.
     pub const DEFAULT_HOTKEY: &[&[u16]] = &[&[58, 61]];
     pub const MODIFIER_HINT: &str = "Include a modifier like ⌘, ⌥, ⌃, ⇧ or fn.";
+    pub const SHIFT: &[u16] = &[56, 60];
+    pub const ESCAPE: u16 = 53;
     const HID_SYSTEM_STATE: i32 = 1;
 
     pub fn held() -> super::Held {
@@ -64,6 +66,8 @@ mod platform {
     /// common in shortcuts, and Alt alone opens app menus when it is let go.
     pub const DEFAULT_HOTKEY: &[&[u16]] = &[&[0xA2, 0xA3], &[0x5B, 0x5C]];
     pub const MODIFIER_HINT: &str = "Include a modifier like Ctrl, Alt, Shift or Windows.";
+    pub const SHIFT: &[u16] = &[0xA0, 0xA1];
+    pub const ESCAPE: u16 = 0x1B;
     // Mouse buttons, and the side-blind Shift, Control and Alt codes that shadow the
     // left and right ones, are never shortcut keys.
     const SKIPPED: &[u16] = &[0x01, 0x02, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12];
@@ -92,6 +96,8 @@ mod platform {
     /// Control and Super together, as on Windows.
     pub const DEFAULT_HOTKEY: &[&[u16]] = &[&[37, 105], &[133, 134]];
     pub const MODIFIER_HINT: &str = "Include a modifier like Ctrl, Alt, Shift or Super.";
+    pub const SHIFT: &[u16] = &[50, 62];
+    pub const ESCAPE: u16 = 9;
 
     // One connection for the life of the app. Wayland sessions have no X server for
     // Parla to read, so the shortcut only works under X11 or XWayland's view of X apps.
@@ -121,4 +127,10 @@ mod platform {
     }
 }
 
-pub use platform::{held, CAPS_LOCK, DEFAULT_HOTKEY, MAX_KEYCODE, MODIFIERS, MODIFIER_HINT};
+pub use platform::{held, CAPS_LOCK, DEFAULT_HOTKEY, ESCAPE, MAX_KEYCODE, MODIFIERS, MODIFIER_HINT, SHIFT};
+
+impl Held {
+    pub fn shift(&self) -> bool {
+        SHIFT.iter().any(|key| self.contains(*key))
+    }
+}

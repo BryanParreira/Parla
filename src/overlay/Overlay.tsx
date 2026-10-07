@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { AppWindow, ClipboardPaste, TextSelect } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { PASTE_KEYS, type DictationEvent } from "../lib/api";
@@ -8,14 +9,24 @@ import Orb from "./Orb";
 type View =
   | { kind: "hidden" }
   | { kind: "recording"; command: boolean }
-  | { kind: "processing"; command: boolean }
+  | { kind: "processing"; command: boolean; label?: string }
   | { kind: "message"; text: string; tone: "error" | "muted" };
+
+const CONTEXT_ICONS: Record<string, typeof AppWindow> = {
+  selection: TextSelect,
+  clipboard: ClipboardPaste,
+  app: AppWindow,
+};
 
 export default function Overlay() {
   const [view, setView] = useState<View>({ kind: "hidden" });
   const [level, setLevel] = useState(0);
   const [partial, setPartial] = useState("");
+  const [mode, setMode] = useState<string | null>(null);
+  const [context, setContext] = useState<string[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const hideTimer = useRef<number | undefined>(undefined);
+  const noticeTimer = useRef<number | undefined>(undefined);
   const command = useRef(false);
 
   useEffect(() => {
@@ -31,10 +42,20 @@ export default function Overlay() {
           command.current = payload.command;
           setLevel(0);
           setPartial("");
+          setMode(null);
+          setContext([]);
+          setNotice(null);
           setView({ kind: "recording", command: payload.command });
           break;
         case "processing":
           setView({ kind: "processing", command: command.current });
+          break;
+        case "working":
+          command.current = false;
+          setView({ kind: "processing", command: false, label: payload.label });
+          break;
+        case "notice":
+          flash(payload.text, "muted", 3200);
           break;
         case "done":
         case "cancelled":
@@ -65,12 +86,24 @@ export default function Overlay() {
     });
 
     const offPartial = listen<string>("partial", ({ payload }) => setPartial(payload));
+    const offMode = listen<string>("mode", ({ payload }) => setMode(payload));
+    const offContext = listen<string[]>("context", ({ payload }) => setContext(payload));
+    // A note while recording, like "press Esc again", shows in place of "Listening".
+    const offNotice = listen<string>("notice", ({ payload }) => {
+      window.clearTimeout(noticeTimer.current);
+      setNotice(payload);
+      noticeTimer.current = window.setTimeout(() => setNotice(null), 3000);
+    });
 
     return () => {
       window.clearTimeout(hideTimer.current);
       offDictation.then((stop) => stop());
       offLevel.then((stop) => stop());
       offPartial.then((stop) => stop());
+      offMode.then((stop) => stop());
+      offContext.then((stop) => stop());
+      offNotice.then((stop) => stop());
+      window.clearTimeout(noticeTimer.current);
     };
   }, []);
 
@@ -91,8 +124,17 @@ export default function Overlay() {
               <>
                 <Orb level={level} command={view.command} />
                 {view.command && <span className="text-xs font-medium text-white/75">Command</span>}
+                {mode && !view.command && (
+                  <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/85">{mode}</span>
+                )}
+                {context.map((kind) => {
+                  const Icon = CONTEXT_ICONS[kind];
+                  return Icon ? <Icon key={kind} className="size-3.5 text-white/60" aria-label={`Using ${kind}`} /> : null;
+                })}
                 {/* The newest words matter most, so a long preview keeps its end. */}
-                {partial ? (
+                {notice ? (
+                  <span className="text-xs font-medium text-[#f0c27a]">{notice}</span>
+                ) : partial ? (
                   <span className="max-w-[230px] truncate text-xs text-white/85">
                     {partial.length > 42 ? `…${partial.slice(-42)}` : partial}
                   </span>
@@ -105,12 +147,14 @@ export default function Overlay() {
             {view.kind === "processing" && (
               <>
                 <Orb level={0} busy command={view.command} />
-                <span className="text-xs font-medium text-white/75">{view.command ? "Rewriting" : "Transcribing"}</span>
+                <span className="max-w-[260px] truncate text-xs font-medium text-white/75">
+                  {view.label ?? (view.command ? "Rewriting" : mode ? `Writing as ${mode}` : "Transcribing")}
+                </span>
               </>
             )}
 
             {view.kind === "message" && (
-              <span className={cx("max-w-[290px] truncate text-xs font-medium", view.tone === "error" ? "text-[#f0a39d]" : "text-white/75")}>
+              <span className={cx("max-w-[310px] truncate text-xs font-medium", view.tone === "error" ? "text-[#f0a39d]" : "text-white/75")}>
                 {view.text}
               </span>
             )}

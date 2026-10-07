@@ -1,4 +1,4 @@
-import { ArrowDownToLine, History as HistoryIcon, House, Settings as SettingsIcon } from "lucide-react";
+import { ArrowDownToLine, History as HistoryIcon, House, Layers, Settings as SettingsIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
@@ -7,15 +7,17 @@ import { api } from "../lib/api";
 import { cx } from "../lib/utils";
 import HistoryPage from "./History";
 import HomePage from "./Home";
+import ModesPage from "./Modes";
 import Onboarding from "./Onboarding";
 import SettingsPage from "./Settings";
 import { Keys, Logo, StatusDot } from "./ui";
 
-export type Page = "home" | "history" | "settings";
+export type Page = "home" | "history" | "modes" | "settings";
 
 const NAV = [
   { id: "home", label: "Home", icon: House },
   { id: "history", label: "History", icon: HistoryIcon },
+  { id: "modes", label: "Modes", icon: Layers },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ] as const;
 
@@ -121,6 +123,13 @@ export default function App() {
             />
             <span className="truncate">{phase === "recording" ? "Listening…" : phase === "processing" ? "Transcribing…" : modelLabel}</span>
           </div>
+          <button
+            onClick={() => setPage("modes")}
+            className="mt-2 flex w-full items-center justify-between text-[12px] text-muted transition-colors hover:text-fg"
+          >
+            <span>Mode</span>
+            <span className="font-medium text-fg/90">{settings.modes.find((m) => m.id === settings.activeMode)?.name ?? "Default"}</span>
+          </button>
           <div className="mt-2.5 flex items-center justify-between">
             <span className="text-[12px] text-muted">Hold to talk</span>
             <Keys hotkey={settings.hotkey} size="sm" active={phase === "recording"} />
@@ -150,7 +159,8 @@ export default function App() {
                 onNavigate={setPage}
               />
             )}
-            {page === "history" && <HistoryPage entries={entries} />}
+            {page === "history" && <HistoryPage entries={entries} settings={settings} />}
+            {page === "modes" && <ModesPage settings={settings} update={update} entries={entries} />}
             {page === "settings" && (
               <SettingsPage settings={settings} update={update} model={model} permissions={permissions} entries={entries} />
             )}

@@ -743,3 +743,28 @@ export function SuggestionList({
     </div>
   );
 }
+
+export function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+  return (
+    <section className="mb-6">
+      <div className="mb-2 px-1">
+        <h2 className="text-[13px] font-semibold">{title}</h2>
+        {description && <p className="text-[12px] text-muted">{description}</p>}
+      </div>
+      <Card className="divide-y divide-line">{children}</Card>
+    </section>
+  );
+}
+
+export function Row({ label, description, children }: { label: string; description: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-6 px-4 py-3.5">
+      <div>
+        <p className="text-[13px] font-medium">{label}</p>
+        <p className="mt-0.5 text-[12px] text-muted">{description}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+

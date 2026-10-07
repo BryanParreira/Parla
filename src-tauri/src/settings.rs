@@ -21,6 +21,146 @@ const MAX_TRANSFORM_NAME_LENGTH: usize = 32;
 const MAX_TRANSFORM_LENGTH: usize = 300;
 /// Styles an app rule can pick. "off" types the plain transcript in that app.
 pub const APP_STYLES: [&str; 6] = ["casual", "formal", "email", "code", "notes", "off"];
+const MAX_MODES: usize = 16;
+const MAX_MODE_NAME_LENGTH: usize = 32;
+const MAX_MODE_INSTRUCTIONS: usize = 1500;
+const MAX_MODE_EXAMPLES: usize = 3;
+const MAX_EXAMPLE_LENGTH: usize = 600;
+const MAX_MODE_APPS: usize = 20;
+const MAX_MICS: usize = 12;
+/// How long recordings may be kept, in days. Past a year nobody is coming back for them.
+const MAX_KEEP_AUDIO_DAYS: u32 = 365;
+const MAX_IDLE_MINUTES: u32 = 240;
+/// What a mode starts from. "default" is Parla as it has always worked; the others pin a
+/// style, and "custom" runs the user's own instructions.
+pub const MODE_PRESETS: [&str; 6] = ["default", "voice", "message", "email", "note", "custom"];
+pub const DEFAULT_MODE: &str = "default";
+
+/// One dictated input and the text the user wants out of it, shown to the model so it
+/// copies the pattern instead of guessing from a description.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ModeExample {
+    pub input: String,
+    pub output: String,
+}
+
+/// What a mode lets its cleanup see besides the dictation itself. All of it is read
+/// through Accessibility or the pasteboard on this Mac and only ever reaches the
+/// on-device model.
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ModeContext {
+    /// The text selected when recording started.
+    pub selection: bool,
+    /// Text copied up to three seconds before recording, or while it ran.
+    pub clipboard: bool,
+    /// The app, its window title, the date and time, and the user's name.
+    pub app: bool,
+}
+
+/// A way of turning speech into text: plain transcription, a chat message, an email, a
+/// note, or the user's own instructions. Picked by hand, by its own shortcut, or by the
+/// app or website being dictated into.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ModeConfig {
+    /// Stable key, so renaming a mode keeps its shortcut and deep links working.
+    pub id: String,
+    pub name: String,
+    pub preset: String,
+    /// The custom preset's own instructions, or extra guidance for the others.
+    pub instructions: String,
+    pub examples: Vec<ModeExample>,
+    pub context: ModeContext,
+    /// App names, bundle id fragments or website domains that switch to this mode.
+    pub apps: Vec<String>,
+    /// Starts a recording straight in this mode.
+    pub hotkey: Option<Hotkey>,
+    /// Language code the result is written in, translating when needed; None keeps the
+    /// language spoken.
+    pub translate: Option<String>,
+    /// Overrides the cleanup level; None follows the Writing settings.
+    pub level: Option<CleanupLevel>,
+}
+
+impl Default for ModeConfig {
+    fn default() -> Self {
+        Self {
+            id: DEFAULT_MODE.into(),
+            name: "Default".into(),
+            preset: DEFAULT_MODE.into(),
+            instructions: String::new(),
+            examples: Vec::new(),
+            context: ModeContext::default(),
+            apps: Vec::new(),
+            hotkey: None,
+            translate: None,
+            level: None,
+        }
+    }
+}
+
+// The Mac engine reads presets in Swift; these are the Rust engine's view of them.
+#[cfg_attr(not(desktop_engine), allow(dead_code))]
+impl ModeConfig {
+    fn preset(id: &str, name: &str, preset: &str) -> Self {
+        Self { id: id.into(), name: name.into(), preset: preset.into(), ..Self::default() }
+    }
+
+    /// Whether this mode's text goes through Enhance at all.
+    pub fn cleans_up(&self) -> bool {
+        self.preset != "voice"
+    }
+
+    /// The style a preset pins, overriding whatever the app would pick.
+    pub fn style(&self) -> Option<&'static str> {
+        match self.preset.as_str() {
+            "message" => Some("casual"),
+            "email" => Some("email"),
+            "note" => Some("notes"),
+            _ => None,
+        }
+    }
+}
+
+fn default_modes() -> Vec<ModeConfig> {
+    vec![
+        ModeConfig::default(),
+        ModeConfig::preset("voice", "Voice to Text", "voice"),
+        ModeConfig::preset("message", "Message", "message"),
+        ModeConfig::preset("email", "Email", "email"),
+        ModeConfig::preset("note", "Note", "note"),
+    ]
+}
+
+/// Lines the engine reads to pick a mode by app or site: "match<TAB>mode id".
+pub fn mode_rules_text(modes: &[ModeConfig]) -> String {
+    modes
+        .iter()
+        .flat_map(|mode| mode.apps.iter().map(move |app| format!("{}\t{}", app.replace(['\t', '\n'], " "), mode.id)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// What other audio does while Parla listens.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OtherAudio {
+    Keep,
+    Lower,
+    #[default]
+    Mute,
+}
+
+impl<'de> Deserialize<'de> for OtherAudio {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(deserializer).as_deref() {
+            Ok("keep") => Self::Keep,
+            Ok("lower") => Self::Lower,
+            _ => Self::Mute,
+        })
+    }
+}
 
 /// A spoken phrase that is typed as saved text, like "my email" for an address.
 #[derive(Clone, Serialize, Deserialize)]
@@ -283,6 +423,34 @@ pub struct Settings {
     /// Language code Whisper is told to expect; `None` detects it.
     pub language: Option<String>,
     pub onboarded: bool,
+    pub modes: Vec<ModeConfig>,
+    /// The mode used when no app rule or mode shortcut picks another.
+    pub active_mode: String,
+    /// Held while recording, tapping cycles through the modes; or pressed while idle
+    /// to switch the active one.
+    pub mode_hotkey: Option<Hotkey>,
+    /// Holding Shift as the dictation ends presses Return after the paste.
+    pub shift_to_send: bool,
+    /// Esc throws a recording away, asking again for one longer than 30 seconds.
+    pub esc_cancels: bool,
+    /// Microphones to prefer, best first, when no single one is chosen.
+    pub preferred_mics: Vec<String>,
+    /// Microphones never offered, like virtual devices nobody talks into.
+    pub hidden_mics: Vec<String>,
+    /// Turns the microphone's input volume up while recording, then puts it back.
+    pub boost_input: bool,
+    /// Turned down or silenced, when `mute_other_audio` is on.
+    pub other_audio: OtherAudio,
+    /// Cuts long silences out before transcribing, which keeps Whisper from inventing
+    /// words for them.
+    pub trim_silence: bool,
+    /// Unloads the big speech models after this many idle minutes; 0 keeps them loaded.
+    pub unload_after_minutes: u32,
+    /// Keeps each dictation's audio for this many days, so it can be played back and
+    /// transcribed again; 0 keeps none.
+    pub keep_audio_days: u32,
+    /// Clicking the menu bar icon starts and stops a recording; right-click opens the menu.
+    pub tray_click_records: bool,
 }
 
 impl Default for Settings {
@@ -317,6 +485,19 @@ impl Default for Settings {
             speech_model: SpeechModel::Parakeet,
             language: None,
             onboarded: false,
+            modes: default_modes(),
+            active_mode: DEFAULT_MODE.into(),
+            mode_hotkey: None,
+            shift_to_send: true,
+            esc_cancels: true,
+            preferred_mics: Vec::new(),
+            hidden_mics: Vec::new(),
+            boost_input: false,
+            other_audio: OtherAudio::Mute,
+            trim_silence: true,
+            unload_after_minutes: 0,
+            keep_audio_days: 0,
+            tray_click_records: false,
         }
     }
 }
@@ -326,12 +507,16 @@ impl Settings {
         self.hotkey.validate()?;
         // Each optional shortcut has to clear the dictation key and every optional one
         // named before it, so no two shortcuts can ever fire on the same keys.
-        let optional = [
-            ("pastes the last dictation", &self.repeat_hotkey),
-            ("is Command Mode", &self.command_hotkey),
-            ("undoes the last paste", &self.undo_hotkey),
-            ("opens the transform menu", &self.transform_hotkey),
+        let mut optional: Vec<(String, &Option<Hotkey>)> = vec![
+            ("pastes the last dictation".into(), &self.repeat_hotkey),
+            ("is Command Mode".into(), &self.command_hotkey),
+            ("undoes the last paste".into(), &self.undo_hotkey),
+            ("opens the transform menu".into(), &self.transform_hotkey),
+            ("switches modes".into(), &self.mode_hotkey),
         ];
+        for mode in &self.modes {
+            optional.push((format!("starts {}", mode.name), &mode.hotkey));
+        }
         for (index, (_, hotkey)) in optional.iter().enumerate() {
             let Some(hotkey) = hotkey.as_ref() else { continue };
             hotkey.validate()?;
@@ -345,6 +530,36 @@ impl Settings {
             }
         }
         Ok(())
+    }
+
+    /// The mode a recording uses when nothing more specific picks one.
+    pub fn active(&self) -> &ModeConfig {
+        self.mode(&self.active_mode).unwrap_or(&self.modes[0])
+    }
+
+    pub fn mode(&self, id: &str) -> Option<&ModeConfig> {
+        self.modes.iter().find(|mode| mode.id == id)
+    }
+
+    /// A mode named in a deep link or on the command line: its id, or its name in any case.
+    pub fn find_mode(&self, wanted: &str) -> Option<&ModeConfig> {
+        let wanted = wanted.trim();
+        self.mode(wanted).or_else(|| self.modes.iter().find(|mode| mode.name.eq_ignore_ascii_case(wanted)))
+    }
+
+    /// The mode after `id`, wrapping around, for cycling with the mode shortcut.
+    pub fn next_mode(&self, id: &str) -> &ModeConfig {
+        let index = self.modes.iter().position(|mode| mode.id == id).unwrap_or(0);
+        &self.modes[(index + 1) % self.modes.len()]
+    }
+
+    /// The microphone to record from: the one chosen, else the most preferred one that
+    /// is plugged in, else the system default.
+    pub fn microphone(&self, available: &[crate::engine::InputDevice]) -> Option<String> {
+        let present = |uid: &String| available.iter().any(|device| &device.uid == uid);
+        self.input_device
+            .clone()
+            .or_else(|| self.preferred_mics.iter().find(|uid| present(uid)).cloned())
     }
 
     /// Trims the dictionary down to something the model can read quickly, so a long
@@ -407,11 +622,80 @@ impl Settings {
         self.transforms = transforms;
 
         // Language codes are two or three letters; anything else means "detect".
-        self.language = self
-            .language
-            .take()
-            .map(|code| code.trim().to_lowercase())
-            .filter(|code| (2..=3).contains(&code.len()) && code.chars().all(|c| c.is_ascii_lowercase()));
+        self.language = self.language.take().and_then(language_code);
+
+        self.sanitize_modes();
+
+        for list in [&mut self.preferred_mics, &mut self.hidden_mics] {
+            let mut kept: Vec<String> = Vec::new();
+            for uid in list.drain(..) {
+                if !uid.trim().is_empty() && !kept.contains(&uid) {
+                    kept.push(uid);
+                }
+            }
+            kept.truncate(MAX_MICS);
+            *list = kept;
+        }
+        self.keep_audio_days = self.keep_audio_days.min(MAX_KEEP_AUDIO_DAYS);
+        self.unload_after_minutes = self.unload_after_minutes.min(MAX_IDLE_MINUTES);
+    }
+
+    /// Keeps the Default mode first and every mode well formed, so the rest of Parla can
+    /// always find one to use.
+    fn sanitize_modes(&mut self) {
+        let clip = |text: &str, limit: usize| text.trim().chars().take(limit).collect::<String>();
+        let mut modes: Vec<ModeConfig> = Vec::new();
+        for mode in self.modes.drain(..) {
+            let id = clip(&mode.id, MAX_MODE_NAME_LENGTH);
+            let name = clip(&mode.name, MAX_MODE_NAME_LENGTH);
+            if id.is_empty() || name.is_empty() || modes.iter().any(|kept| kept.id == id) {
+                continue;
+            }
+            let preset = if MODE_PRESETS.contains(&mode.preset.as_str()) { mode.preset } else { "custom".into() };
+            let examples = mode
+                .examples
+                .into_iter()
+                .map(|example| ModeExample {
+                    input: clip(&example.input, MAX_EXAMPLE_LENGTH),
+                    output: clip(&example.output, MAX_EXAMPLE_LENGTH),
+                })
+                .filter(|example| !example.input.is_empty() && !example.output.is_empty())
+                .take(MAX_MODE_EXAMPLES)
+                .collect();
+            let mut apps: Vec<String> = Vec::new();
+            for app in mode.apps {
+                let app = clip(&app, MAX_APP_NAME_LENGTH);
+                if !app.is_empty() && !apps.iter().any(|kept| kept.eq_ignore_ascii_case(&app)) {
+                    apps.push(app);
+                }
+            }
+            apps.truncate(MAX_MODE_APPS);
+            modes.push(ModeConfig {
+                id,
+                name,
+                preset,
+                instructions: clip(&mode.instructions, MAX_MODE_INSTRUCTIONS),
+                examples,
+                apps,
+                translate: mode.translate.and_then(language_code),
+                ..mode
+            });
+        }
+        // The Default mode is how Parla worked before modes existed, so there is always one.
+        match modes.iter().position(|mode| mode.id == DEFAULT_MODE) {
+            Some(0) => {}
+            Some(index) => {
+                let default = modes.remove(index);
+                modes.insert(0, default);
+            }
+            None => modes.insert(0, ModeConfig::default()),
+        }
+        modes[0].preset = DEFAULT_MODE.into();
+        modes.truncate(MAX_MODES);
+        self.modes = modes;
+        if self.mode(&self.active_mode).is_none() {
+            self.active_mode = DEFAULT_MODE.into();
+        }
     }
 
     /// The app rules as the engine reads them: one "app<TAB>style" per line.
@@ -424,6 +708,12 @@ impl Settings {
     }
 }
 
+/// Two or three lower-case letters, or nothing.
+fn language_code(code: String) -> Option<String> {
+    let code = code.trim().to_lowercase();
+    ((2..=3).contains(&code.len()) && code.chars().all(|c| c.is_ascii_lowercase())).then_some(code)
+}
+
 pub struct SettingsStore {
     path: PathBuf,
     current: Mutex<Settings>,
@@ -432,9 +722,13 @@ pub struct SettingsStore {
 impl SettingsStore {
     pub fn load(app: &AppHandle) -> Self {
         let path = storage::path(app, "settings.json");
-        let current = Mutex::new(storage::read(&path));
+        let mut settings: Settings = storage::read(&path);
+        // Files from before modes existed load with an empty list.
+        settings.sanitize();
+        let current = Mutex::new(settings);
         Self { path, current }
     }
+
 
     pub fn get(&self) -> Settings {
         self.current.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -626,5 +920,67 @@ mod tests {
         assert!(Hotkey { groups: vec![vec![CAPS_LOCK]] }.validate().is_err());
         assert!(Hotkey { groups: vec![vec![55], vec![56], vec![49], vec![48]] }.validate().is_err());
         assert!(Hotkey { groups: vec![vec![59, 62], vec![49]] }.validate().is_ok());
+    }
+
+    #[test]
+    fn older_files_get_the_built_in_modes() {
+        let mut settings: Settings = serde_json::from_str("{}").unwrap();
+        settings.sanitize();
+        assert_eq!(settings.modes[0].id, DEFAULT_MODE);
+        assert_eq!(settings.modes.len(), 5);
+        assert_eq!(settings.active().id, DEFAULT_MODE);
+        assert!(settings.shift_to_send && settings.esc_cancels && settings.trim_silence);
+        assert!(settings.keep_audio_days == 0 && !settings.boost_input, "privacy-sensitive extras stay off");
+    }
+
+    #[test]
+    fn keeps_modes_well_formed() {
+        let custom = |id: &str, name: &str, preset: &str| ModeConfig {
+            id: id.into(),
+            name: name.into(),
+            preset: preset.into(),
+            ..ModeConfig::default()
+        };
+        let mut settings = Settings {
+            modes: vec![
+                custom("reply", " Reply ", "made-up"),
+                custom("reply", "Duplicate", "custom"),
+                custom("", "No id", "custom"),
+                ModeConfig { translate: Some(" ES ".into()), ..custom("es", "Spanish", "message") },
+            ],
+            active_mode: "gone".into(),
+            ..Settings::default()
+        };
+        settings.sanitize();
+        let ids: Vec<&str> = settings.modes.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["default", "reply", "es"]);
+        assert_eq!(settings.modes[1].name, "Reply");
+        assert_eq!(settings.modes[1].preset, "custom");
+        assert_eq!(settings.modes[2].translate.as_deref(), Some("es"));
+        assert_eq!(settings.active_mode, DEFAULT_MODE);
+        assert_eq!(settings.next_mode("es").id, DEFAULT_MODE);
+        assert_eq!(settings.find_mode("spanish").map(|m| m.id.as_str()), Some("es"));
+        assert_eq!(mode_rules_text(&settings.modes), "");
+    }
+
+    // Keycodes are macOS ones; each platform numbers keys its own way.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_mode_shortcut_must_be_its_own() {
+        let mut settings = Settings { mode_hotkey: Some(Hotkey { groups: vec![vec![54]] }), ..Settings::default() };
+        settings.modes[1].hotkey = Some(Hotkey { groups: vec![vec![54]] });
+        assert!(settings.validate().is_err());
+        settings.modes[1].hotkey = Some(Hotkey { groups: vec![vec![59, 62], vec![18]] });
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn prefers_ranked_microphones_that_are_plugged_in() {
+        use crate::engine::InputDevice;
+        let device = |uid: &str| InputDevice { uid: uid.into(), name: uid.into() };
+        let settings = Settings { preferred_mics: vec!["usb".into(), "built-in".into()], ..Settings::default() };
+        assert_eq!(settings.microphone(&[device("built-in")]).as_deref(), Some("built-in"));
+        assert_eq!(settings.microphone(&[device("usb"), device("built-in")]).as_deref(), Some("usb"));
+        assert_eq!(settings.microphone(&[device("airpods")]), None);
     }
 }
