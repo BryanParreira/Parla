@@ -1,6 +1,6 @@
 [package]
 name = "parla"
-version = "1.6.0"
+version = "1.6.1"
 description = "Fast, fully local dictation"
 authors = ["Bryan Bernardo Parreira"]
 license-file = "../LICENSE.md"
