@@ -532,7 +532,44 @@ pub fn stop() -> Result<Transcript, String> {
             }
         }
     }
+    // In an email app either end of a letter is laid out; anywhere else only a dictation
+    // spoken as a whole email is, and never in chats, code, or apps set to plain text.
+    let style = prepared.style.as_deref();
+    let name = user_first_name();
+    if style == Some("email") {
+        transcript.text = super::email::apply(&transcript.text, name.as_deref(), false);
+    } else if prepared.enhance && !matches!(style, Some("casual" | "code")) {
+        let laid = super::email::apply(&transcript.text, name.as_deref(), true);
+        if laid != transcript.text {
+            transcript.text = laid;
+            transcript.style = Some("email".into());
+        }
+    }
     Ok(transcript)
+}
+
+/// The user's first name, so a sign-off heard as "Brian" comes out as their "Bryan".
+/// Linux keeps the full name in the account's GECOS field; Windows only offers the login
+/// name, which is used when it looks like a name.
+fn user_first_name() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let user = std::env::var("USER").ok()?;
+        let passwd = fs::read_to_string("/etc/passwd").ok()?;
+        let line = passwd.lines().find(|line| line.split(':').next() == Some(user.as_str()))?;
+        let full = line.split(':').nth(4)?.split(',').next()?;
+        full.split_whitespace().next().map(String::from)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let login = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).ok()?;
+        let login = login.split(['.', '_', ' ']).next()?.to_string();
+        if login.chars().count() < 2 || !login.chars().all(char::is_alphabetic) {
+            return None;
+        }
+        let mut chars = login.chars();
+        chars.next().map(|first| first.to_uppercase().chain(chars.flat_map(char::to_lowercase)).collect())
+    }
 }
 
 pub fn cancel() {

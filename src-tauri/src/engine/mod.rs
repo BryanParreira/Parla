@@ -11,6 +11,9 @@ pub use mac::*;
 
 #[cfg(desktop_engine)]
 mod desktop;
+// The Mac lays emails out in Swift; this is the same layout for the Rust engine.
+#[cfg_attr(not(desktop_engine), allow(dead_code))]
+mod email;
 #[cfg(desktop_engine)]
 pub use desktop::*;
 
@@ -68,7 +71,7 @@ pub struct Transcript {
     pub raw: Option<String>,
     pub transcribe_ms: Option<u64>,
     pub enhance_ms: Option<u64>,
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(any(not(test), desktop_engine), allow(dead_code))]
     pub audio_ms: Option<u64>,
     /// The text lands straight after a word, so a space goes in front of it.
     #[serde(default)]

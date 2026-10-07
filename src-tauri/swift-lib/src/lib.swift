@@ -535,6 +535,9 @@ private final class Dictation {
   private var speculating = false
   private var voiceEnd = 0
   private var speculatedVoiceEnd = 0
+  /// Told about each transcript made during a pause, so the cleanup can start on it
+  /// before the key comes up. Set before `start` and never changed after.
+  var onSpeculation: ((String) -> Void)?
 
   init(
     streamingModel: ParakeetStreamingASRModel?, batchModel: ParakeetASRModel?, device: String?
@@ -649,6 +652,7 @@ private final class Dictation {
       if let text { self.speculation = Speculation(voiceEnd: covered, text: text) }
       self.speculating = false
       self.speculationLock.unlock()
+      if let text { self.onSpeculation?(text) }
     }
   }
 
@@ -1354,7 +1358,10 @@ private enum EmailLayout {
     return userName
   }
 
-  static func apply(_ text: String, userName: String?) -> String {
+  /// With `requireBoth`, the text is only laid out when it was spoken as a whole email,
+  /// greeting first and sign-off last. That is how an email is recognised by what was
+  /// said rather than by the app it is going into.
+  static func apply(_ text: String, userName: String?, requireBoth: Bool = false) -> String {
     var words = text.split(separator: " ").map(String.init)
     guard words.count >= 2, !text.contains("\n") else { return text }
 
@@ -1411,7 +1418,10 @@ private enum EmailLayout {
       }
     }
 
-    guard greeting != nil || signOff != nil else { return text }
+    // A quick "Hey, got a sec? Thanks" is a chat line, not a letter: a recognised email
+    // also signs off with a name or says enough to be one.
+    let wholeEmail = greeting != nil && signOff != nil && (name != nil || words.count >= 15)
+    guard requireBoth ? wholeEmail : greeting != nil || signOff != nil else { return text }
     var body = words.joined(separator: " ").trimmingCharacters(in: .whitespaces)
     if let last = body.last, last == "," || last == ";" { body.removeLast() }
     var parts: [String] = []
@@ -1860,8 +1870,18 @@ private actor Engine {
     var context: CursorContext? = nil
     /// The style picked for the app or site, such as "email".
     var style: String? = nil
+    /// Cleanup is on for this app, so a dictation spoken as an email may be laid out
+    /// as one wherever it goes.
+    var layout = false
     var whisper = false
     var language: String? = nil
+    /// What the cleanup session was built from, so a second one can clean a pause's
+    /// transcript without touching the session kept for the final text.
+    var tone: String? = nil
+    var level = Enhancer.Level.standard
+    var formatting = false
+    /// Cleanup already running on the transcript made during the latest pause.
+    var ahead: (text: String, task: Task<String?, Never>)? = nil
   }
 
   private var streaming = ModelSlot<ParakeetStreamingASRModel>()
@@ -1970,6 +1990,7 @@ private actor Engine {
 
     dictation?.halt()
     dictation = nil
+    prepared.ahead?.task.cancel()
     PartialText.shared.set("")
     // Whisper is only used once it has loaded; until then Parakeet keeps dictation working.
     let whisperReady = useWhisper && whisper.model != nil
@@ -1983,6 +2004,10 @@ private actor Engine {
       let next = try Dictation(
         streamingModel: streamingModel, batchModel: whisperReady ? nil : batch.model,
         device: device)
+      next.onSpeculation = { [weak next] text in
+        guard let next else { return }
+        Task { await Engine.shared.cleanAhead(text, from: next) }
+      }
       try next.start(gain: softVoice ? softVoiceGain : 1)
       dictation = next
       prepared = Prepared(whisper: whisperReady, language: language)
@@ -2005,6 +2030,36 @@ private actor Engine {
     prepared.quick = quick
     prepared.context = context
     prepared.style = style
+    prepared.layout = enhance
+    prepared.tone = tone
+    prepared.level = level
+    prepared.formatting = formatting
+  }
+
+  /// Starts the cleanup on a transcript made while the user paused. If they let go
+  /// without saying more, the final text is this one and its cleanup is already done
+  /// or under way, which takes Apple Intelligence's second or two off the wait.
+  fileprivate func cleanAhead(_ text: String, from source: Dictation) {
+    guard dictation === source, prepared.session != nil, !prepared.whisper,
+      prepared.ahead?.text != text
+    else { return }
+    // Only one cleanup at a time: a stale one would hold up the next.
+    prepared.ahead?.task.cancel()
+    prepared.ahead = nil
+    let language = prepared.language ?? detectLanguage(text)
+    let terms = prepared.terms
+    let hints = prepared.hints
+    guard wordCount(text) >= enhanceMinWords,
+      !prepared.quick
+        || Enhancer.needsCleanup(text, language: language, terms: terms, hints: hints)
+    else { return }
+    let (tone, level, formatting) = (prepared.tone, prepared.level, prepared.formatting)
+    let task = Task.detached(priority: .userInitiated) { () -> String? in
+      let session = Enhancer.prepareSession(tone: tone, level: level, formatting: formatting)
+      return await Enhancer.enhance(
+        text, language: language, terms: terms, hints: hints, session: session)
+    }
+    prepared.ahead = (text, task)
   }
 
   func stop() async -> String {
@@ -2025,6 +2080,7 @@ private actor Engine {
   func cancel() {
     dictation?.halt()
     dictation = nil
+    prepared.ahead?.task.cancel()
     prepared = Prepared()
   }
 
@@ -2064,9 +2120,20 @@ private actor Engine {
     }
     payload.style = options.style
     // Laid out as a letter only when it starts one or stands on its own, never in the
-    // middle of a sentence already being written.
-    if options.style == "email", payload.error == nil, options.context?.midSentence != true {
-      payload.text = EmailLayout.apply(payload.text, userName: EmailLayout.userFirstName)
+    // middle of a sentence already being written. Outside an email app, a dictation
+    // spoken as a whole email (greeting first, sign-off last) is laid out too, except
+    // where a letter never belongs: chats, code, and apps set to plain text.
+    if payload.error == nil, options.context?.midSentence != true {
+      if options.style == "email" {
+        payload.text = EmailLayout.apply(payload.text, userName: EmailLayout.userFirstName)
+      } else if options.layout, !["casual", "code"].contains(options.style ?? "") {
+        let laid = EmailLayout.apply(
+          payload.text, userName: EmailLayout.userFirstName, requireBoth: true)
+        if laid != payload.text {
+          payload.text = laid
+          payload.style = "email"
+        }
+      }
     }
     return payload
   }
@@ -2115,6 +2182,9 @@ private actor Engine {
     let transcript = payload.text
     let terms = options.terms
     let hints = options.hints
+    // A cleanup started during a pause is only any use if nothing was said after it.
+    let ahead = options.ahead.flatMap { $0.text == transcript ? $0.task : nil }
+    if ahead == nil { options.ahead?.task.cancel() }
     guard let session = options.session, wordCount(transcript) >= enhanceMinWords else {
       return payload
     }
@@ -2127,9 +2197,11 @@ private actor Engine {
     let enhanceStart = DispatchTime.now()
     let language = payload.language
     let cleaned = await firstResult(within: enhanceTimeout(words: wordCount(transcript))) {
-      await Enhancer.enhance(
+      if let ahead { return await ahead.value }
+      return await Enhancer.enhance(
         transcript, language: language, terms: terms, hints: hints, session: session)
     }
+    ahead?.cancel()
     payload.enhanceMs = milliseconds(since: enhanceStart)
     if let cleaned, cleaned != transcript {
       payload.raw = transcript
