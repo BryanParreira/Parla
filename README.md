@@ -1,0 +1,174 @@
+<p align="center">
+  <img src="design/readme/banner.png" alt="Parla" width="100%">
+</p>
+
+<p align="center">
+  <b>Fast, private dictation for macOS, with Windows and Linux in preview.</b><br>
+  Hold a key, say what you want to write, let go. It's typed into whatever app you're using.
+</p>
+
+<p align="center">
+  <a href="../../releases/latest"><img src="https://img.shields.io/badge/download-macOS-111?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS"></a>
+  <a href="../../releases/latest"><img src="https://img.shields.io/badge/download-Windows%20preview-111?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows (preview)"></a>
+  <a href="../../releases/latest"><img src="https://img.shields.io/badge/download-Linux%20preview-111?style=for-the-badge&logo=linux&logoColor=white" alt="Download for Linux (preview)"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-15%2B-111?style=flat-square" alt="macOS 15+">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-native-111?style=flat-square" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/audio-never%20leaves%20your%20Mac-111?style=flat-square" alt="Audio never leaves your Mac">
+  <img src="https://img.shields.io/badge/languages-99-111?style=flat-square" alt="Up to 99 languages">
+</p>
+
+---
+
+## Why Parla
+
+Most dictation apps send your voice to a server. Parla doesn't. Speech recognition runs on your Mac's Neural Engine, and text cleanup runs on Apple Intelligence on the same machine. No account and no subscription, and it works on a plane.
+
+- **Private.** Your audio and your text stay on your Mac.
+- **Fast.** Most dictations are typed well under a second after you let go. Parla shows the time for every one.
+- **Everywhere.** Works in any app that takes text: Slack, Mail, Notion, VS Code, your browser.
+- **Multilingual.** Speak any of 25 European languages and Parla detects which one. Switch on Whisper for 99 languages, including Chinese, Japanese, Arabic and Hindi.
+
+## Features
+
+| | |
+|---|---|
+| **Hold to talk** | Hold the dictation key, speak, release. The text is typed where your cursor is. Hold Shift as you let go to press Return after it, to send a chat message. |
+| **Modes** | Voice to Text, Message, Email, Note, or your own Custom mode with its own instructions and examples. A mode can translate into another language, switch on by itself in chosen apps and websites, and have its own shortcut. Switch from the menu bar, the Modes page, a key you can press mid-dictation, or a `parla://` link. |
+| **Context, if you want it** | A mode can also read the text you had selected, what you copied just before, and the app, window and date. All of it is read on your Mac and only ever reaches the on-device model. |
+| **Hands-free** | Double-tap the key to keep recording without holding it. Stops when you tap again or go quiet. |
+| **Enhance** | Removes "um", "uh" and false starts, and keeps only your final version when you correct yourself. Runs on-device with Apple Intelligence. Choose how far it goes: Light, Standard or Polished. |
+| **Undo** | Typed into the wrong window? One key takes the last dictation straight back out. |
+| **Never in passwords** | Parla refuses to listen while a password field has focus, or while a password manager or banking app is in front. |
+| **Command Mode** | Select text, hold a second key and say "make this shorter" or "turn this into a list". The selection is rewritten in place. |
+| **Transforms** | Saved rewrites like "Formal", "Shorter" or "Bullet points". Say the name in Command Mode. |
+| **Match the app** | Casual in chat, polished in email, untouched in code editors. Add your own rules per app, including "no cleanup". Parla only looks at which app is in front. |
+| **Fits your sentence** | Dictate into the middle of a sentence and Parla carries it on: no stray capital or full stop, and a space where one is needed. It reads only the few sentences before your cursor and the words right after it, never password fields, and stores nothing. |
+| **Spoken formatting** | Say "new line", "new paragraph", "bullet point", "comma" or "question mark", in English or Portuguese. |
+| **Your words** | Teach Parla the names, jargon and product spellings it gets wrong. When you fix a name right after a dictation, Parla offers to remember it. |
+| **Snippets** | Say "my email" and your address is typed. |
+| **Live preview** | Watch your words appear as you speak (optional). |
+| **History** | Search everything you've dictated and export it to Markdown. Open any entry to see the text before cleanup, the timings and exactly what the cleanup was asked, or run it again through another mode. It's stored only on your Mac. |
+| **Keep recordings** | Optional: keep each dictation's audio for a day up to a year, to play it back or transcribe it again. |
+| **Transcribe files** | Drop an audio or video file on the window, use **Transcribe File…** in the menu bar, or open it with Parla from Finder. The text lands in History and on the clipboard. |
+| **Meetings** | Record a call from your microphone and the Mac's own audio, or add a recording, and Parla writes a transcript that says who spoke. Parla writes a summary and follow-ups on this Mac with Apple Intelligence. Name the speakers, add your own notes, search and export. Speaker detection downloads a small model the first time you use it, then works offline. Mac only for now. |
+| **Command line and MCP** | `parla` searches and exports your history, shows stats, manages words and snippets and controls the app. `parla mcp` gives an AI assistant the same, and a Claude Code plugin shows in Parla's pill when Claude needs you or is done. |
+| **Backup** | Export your settings, modes, words and snippets (and history, if you like) to one file, and restore them on another Mac. |
+| **Stats** | Words, speaking speed, time saved, your streak and which apps you dictate into. |
+| **Quiet mode** | Pauses, turns down or mutes music and video while you speak, then puts everything back exactly as it was. |
+| **Any microphone** | Pick the input device, or star the ones you trust so a headset joining can't take over. Hide the ones you never use, and let Parla turn a quiet microphone up while you talk. |
+| **Light on memory** | Optionally unload the big speech models after a while idle; long silences are cut out before transcribing so Whisper doesn't invent words for them. |
+| **Update check** | Optional and off by default: once a day, ask GitHub whether a newer Parla is out. It's the only request Parla makes on its own. |
+
+## Install
+
+1. Download the latest `.dmg` from [**Releases**](../../releases/latest).
+2. Open it and drag **Parla** into **Applications**.
+
+<p align="center">
+  <img src="design/readme/install.png" alt="Drag Parla into Applications" width="560">
+</p>
+
+3. Open Parla. The setup guide asks for two permissions:
+   - **Microphone**, to hear you.
+   - **Accessibility**, to type into other apps. Without it, dictations are copied to the clipboard instead.
+
+On first launch Parla downloads its speech models (about 720 MB) from Hugging Face, and spends about half a minute optimizing them for your Mac's Neural Engine. After that it works fully offline. Whisper, if you switch to it, is a one-time 1.6 GB download. The app is signed and notarized by Apple.
+
+### Requirements
+
+- A Mac with Apple Silicon (M1 or later)
+- macOS 15 Sequoia or later
+- For Enhance and Command Mode: macOS 26 with Apple Intelligence turned on. Without them, Parla still types punctuated text.
+
+### Windows and Linux (preview)
+
+New in 1.6.0 and still being tested on real machines, so expect rough edges.
+
+- **Windows 10 or 11 (64-bit):** download `Parla_…_x64-setup.exe` from [Releases](../../releases/latest) and run it. The installer isn't code-signed yet, so Windows shows "Windows protected your PC": click **More info › Run anyway**. Hold **Ctrl + Windows** to dictate.
+- **Linux (64-bit):** download the `.AppImage` (any distribution: `chmod +x` it and run it) or the `.deb` (Ubuntu, Debian, Mint, Pop!_OS). Use an **X11** session; Wayland doesn't let apps watch the shortcut or type into other apps. Hold **Ctrl + Super** to dictate.
+
+On first launch Parla downloads the speech model (about 670 MB) and a small local model for Enhance and Command Mode (Qwen2.5 1.5B, about 1.1 GB). Everything then runs on the computer's processor, offline. Not on Windows and Linux yet: fitting dictations into the sentence around the cursor, live preview, the transform menu, Whisper, lowering other audio while you talk, selected and copied text as context, `parla://` links, the control commands of `parla`, and transcribing files other than WAV. If something goes wrong, the log is at `%LOCALAPPDATA%\Parla\parla.log` on Windows and `~/.local/share/parla/parla.log` on Linux; it records steps and timings, never what you said.
+
+## Using Parla
+
+| Action | How |
+|---|---|
+| Dictate | Hold **Option** (the default), talk, release |
+| Hands-free | Double-tap the dictation key; tap again to stop |
+| Cancel | Press Esc, or any other key while holding the dictation key. Recordings over 30 seconds ask for a second Esc |
+| Send a message | Hold Shift as you let go of the dictation key |
+| Switch modes | The menu bar's **Mode** menu, the Modes page, your mode switch key, or `parla://mode?name=Email` |
+| Rewrite a selection | Select text, hold the Command Mode key, say what to change or the name of a transform |
+| Apply a transform without speaking | Select text, click Parla in the menu bar, then **Transform Selection** |
+| Format as you speak | Say "new line", "new paragraph", "bullet point", "comma", "question mark" |
+| Paste the last dictation again | Press the repeat key, if you set one |
+| Undo the last dictation | Press the undo key, if you set one, before you type anything else |
+| Transcribe a file | Drop it on the window, or **Transcribe File…** in the menu bar |
+| Control from scripts | `parla://record`, `parla://record/start`, `parla://record/stop`, `parla://mode?name=…`, or the `parla` command (Settings › Integrations › Install) |
+
+You can change any shortcut in **Settings**, including combinations like Control + Option.
+
+## How it works
+
+```
+ hold key ──► microphone ──► Parakeet TDT v3 ──► Apple Intelligence ──► typed into your app
+                              (Neural Engine)      (optional cleanup)
+```
+
+- **Speech recognition:** [NVIDIA Parakeet TDT v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), running as a Core ML model on the Neural Engine. It punctuates, capitalizes and recognizes 25 languages on its own. For other languages, [OpenAI Whisper large-v3 turbo](https://huggingface.co/openai/whisper-large-v3-turbo) is an optional download.
+- **Cleanup:** Apple's on-device [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework. The cleanup is skipped when there's nothing to fix, which saves about half a second.
+- **On Windows and Linux:** the same Parakeet model through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), and [Qwen2.5 1.5B Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct) through [llama.cpp](https://github.com/ggml-org/llama.cpp) for cleanup, with the same instructions and safety checks as on the Mac.
+- **Speed:** while you pause, Parla transcribes what you've said so far, so it's often finished by the time you let go.
+
+## Build from source
+
+You need Xcode 26, Rust, Node.js and pnpm.
+
+```bash
+pnpm install
+pnpm app:dev          # run in development
+pnpm tauri build      # build Parla.app
+```
+
+Windows and Linux builds use the Rust engine instead of the Swift one: `pnpm exec tauri build --features desktop-engine`. They are built by [GitHub Actions](.github/workflows/desktop.yml); the same engine can be tried on a Mac with `--features desktop-engine`.
+
+To build a signed, notarized DMG, store notarization credentials once and then run the release script:
+
+```bash
+xcrun notarytool store-credentials parla-notary --apple-id <apple-id> --team-id <team-id>
+./scripts/release.sh
+```
+
+### Project layout
+
+```
+src/                 React UI: main window and the recording overlay
+src-tauri/src/       Rust: hotkeys, paste, settings, history, snippets
+src-tauri/swift-lib/ Swift: audio capture, Parakeet, Apple Intelligence
+design/              Scripts that draw the icon, installer window and this banner
+scripts/release.sh   Build, sign, notarize and staple the DMG
+```
+
+Run the tests with `cargo test --lib` in `src-tauri/`.
+
+## License
+
+Parla is **source-available, not open source.** You're welcome to read the code and to use Parla for personal, non-commercial purposes. You may not copy it, modify it, redistribute it or use it commercially. See [LICENSE.md](LICENSE.md) (PolyForm Strict 1.0.0). For any other use, [get in touch](https://github.com/BryanParreira).
+
+Third-party code and licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Credits
+
+- [Tauri](https://tauri.app): app framework
+- [speech-swift](https://github.com/soniqo/speech-swift): Parakeet on Core ML
+- [NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3): speech recognition model
+- [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) by Jakub Antalik (MIT): inspiration for the dotted recording orb
+
+---
+
+<p align="center">
+  Made by <a href="https://github.com/BryanParreira">Bryan Parreira</a>
+</p>
